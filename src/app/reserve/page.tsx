@@ -6,23 +6,34 @@ import { Tables } from '@/database.types'
 
 type Reserve = Tables<'reserves'>
 type Profile = Tables<'profiles'>
+type Group = Tables<'groups'>
 
 type ReserveWithProfile = Reserve & {
   profile: Profile | null
+  groups?: Group[]
 }
 
 export default function ReservePage() {
   const [reserves, setReserves] = useState<ReserveWithProfile[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editingReserveId, setEditingReserveId] = useState<number | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'list' | 'timetable'>('timetable')
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => {
+    const now = new Date()
+    const day = now.getDay()
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1)
+    return new Date(now.setDate(diff))
+  })
   const [formData, setFormData] = useState({
     title: '',
     start_time: '',
     end_time: '',
-    description: ''
+    description: '',
+    selectedGroups: [] as number[]
   })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -30,6 +41,7 @@ export default function ReservePage() {
 
   useEffect(() => {
     fetchReserves()
+    fetchGroups()
     // 現在のユーザーIDを取得
     const getCurrentUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -37,6 +49,20 @@ export default function ReservePage() {
     }
     getCurrentUser()
   }, [])
+
+  const fetchGroups = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('groups')
+        .select('*')
+        .order('name', { ascending: true })
+
+      if (error) throw error
+      setGroups((data || []) as Group[])
+    } catch (error) {
+      console.error('Error fetching groups:', error)
+    }
+  }
 
   // 15分単位の時間を取得する関数
   const getRoundedTime = () => {
@@ -96,7 +122,16 @@ export default function ReservePage() {
       // 予約データを取得（全ての予約）
       const { data: reservesData, error: reservesError } = await supabase
         .from('reserves')
-        .select('*')
+        .select(`
+          *,
+          reserve_group_relations (
+            groups (
+              id,
+              name,
+              description
+            )
+          )
+        `)
         .order('start_time', { ascending: true })
 
       if (reservesError) throw reservesError
@@ -118,9 +153,10 @@ export default function ReservePage() {
       }
 
       // 予約データとプロフィール情報を結合
-      const reservesWithProfile = (reservesData as Reserve[]).map(reserve => ({
+      const reservesWithProfile = (reservesData as any[]).map(reserve => ({
         ...reserve,
-        profile: reserve.user_id ? profilesData.find(profile => profile.user_id === reserve.user_id) || null : null
+        profile: reserve.user_id ? profilesData.find(profile => profile.user_id === reserve.user_id) || null : null,
+        groups: reserve.reserve_group_relations?.map((relation: any) => relation.groups) || []
       }))
 
       setReserves(reservesWithProfile)
@@ -138,7 +174,8 @@ export default function ReservePage() {
       title: reserve.title || '',
       start_time: reserve.start_time || '',
       end_time: reserve.end_time || '',
-      description: reserve.description || ''
+      description: reserve.description || '',
+      selectedGroups: reserve.groups?.map(group => group.id) || []
     })
     setIsEditing(true)
     setIsFormOpen(true)
@@ -153,7 +190,8 @@ export default function ReservePage() {
       title: '',
       start_time: '',
       end_time: '',
-      description: ''
+      description: '',
+      selectedGroups: []
     })
     setError('')
   }
@@ -237,10 +275,31 @@ export default function ReservePage() {
           .eq('user_id', user.id) // 自分の予約のみ更新可能
 
         if (error) throw error
+
+        // 既存のグループ関係を削除
+        await supabase
+          .from('reserve_group_relations')
+          .delete()
+          .eq('reserve_id', editingReserveId)
+
+        // 新しいグループ関係を追加
+        if (formData.selectedGroups.length > 0) {
+          const groupRelations = formData.selectedGroups.map(groupId => ({
+            reserve_id: editingReserveId,
+            group_id: groupId
+          }))
+
+          const { error: relationError } = await supabase
+            .from('reserve_group_relations')
+            .insert(groupRelations)
+
+          if (relationError) throw relationError
+        }
+
         setMessage('予約を更新しました')
       } else {
         // 新規予約を作成
-        const { error } = await supabase
+        const { data: newReserve, error } = await supabase
           .from('reserves')
           .insert({
             user_id: user.id,
@@ -249,19 +308,44 @@ export default function ReservePage() {
             end_time: formatDateTime(formData.end_time),
             description: formData.description
           })
+          .select()
+          .single()
 
         if (error) throw error
+
+        // グループ関係を追加
+        if (formData.selectedGroups.length > 0) {
+          const groupRelations = formData.selectedGroups.map(groupId => ({
+            reserve_id: newReserve.id,
+            group_id: groupId
+          }))
+
+          const { error: relationError } = await supabase
+            .from('reserve_group_relations')
+            .insert(groupRelations)
+
+          if (relationError) throw relationError
+        }
+
         setMessage('予約を作成しました')
       }
 
-      setError('')
-      handleCloseForm()
       fetchReserves()
+      handleCloseForm()
     } catch (error) {
       console.error('Error saving reserve:', error)
-      setMessage('予約の保存に失敗しました')
+      setError('予約の保存に失敗しました')
     }
     setTimeout(() => setMessage(''), 3000)
+  }
+
+  const toggleGroup = (groupId: number) => {
+    setFormData(prev => ({
+      ...prev,
+      selectedGroups: prev.selectedGroups.includes(groupId)
+        ? prev.selectedGroups.filter(id => id !== groupId)
+        : [...prev.selectedGroups, groupId]
+    }))
   }
 
   // 重複チェック関数を修正（編集時は自分の予約との重複を無視）
@@ -326,20 +410,109 @@ export default function ReservePage() {
     return `${formatTime(startTime)} - ${formatTime(endTime)}`
   }
 
+  // 15分刻みの時間オプションを生成する関数（9:00〜18:00）
+  const generateTimeOptions = () => {
+    const options = [];
+    for (let hour = 9; hour <= 18; hour++) {
+      for (let minute = 0; minute < 60; minute += 15) {
+        // 18:00以降は除外
+        if (hour === 18 && minute > 0) continue;
+        const timeString = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        options.push(timeString);
+      }
+    }
+    return options;
+  };
+
+  const timeOptions = generateTimeOptions();
+
+  // 週の日付を生成する関数（月曜から金曜まで）
+  const generateWeekDates = () => {
+    const dates = []
+    const startDate = new Date(currentWeekStart)
+    // 月曜日から金曜日まで（5日分）
+    for (let i = 0; i < 5; i++) {
+      const date = new Date(startDate)
+      date.setDate(startDate.getDate() + i)
+      dates.push(date)
+    }
+    return dates
+  }
+
+  // 時間帯を生成する関数
+  const generateTimeSlots = () => {
+    const slots = []
+    for (let hour = 9; hour <= 18; hour++) {
+      for (let minute = 0; minute < 60; minute += 30) {
+        if (hour === 18 && minute > 0) continue
+        slots.push(`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`)
+      }
+    }
+    return slots
+  }
+
+  // 予約を時間帯ごとに整理する関数
+  const organizeReservesByTimeSlot = (date: Date) => {
+    const timeSlots = generateTimeSlots()
+    const organizedReserves: { [key: string]: ReserveWithProfile[] } = {}
+    
+    timeSlots.forEach(slot => {
+      organizedReserves[slot] = reserves.filter(reserve => {
+        if (!reserve.start_time) return false
+        const reserveDate = new Date(reserve.start_time)
+        const reserveTime = reserveDate.toTimeString().slice(0, 5)
+        return reserveDate.toDateString() === date.toDateString() && reserveTime === slot
+      })
+    })
+    
+    return organizedReserves
+  }
+
+  // 週を移動する関数
+  const moveWeek = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentWeekStart)
+    newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7))
+    setCurrentWeekStart(newDate)
+  }
+
   if (loading) {
     return <div className="flex justify-center items-center min-h-screen">読み込み中...</div>
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
+    <div className="max-w-7xl mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">予約一覧</h1>
-        <button
-          onClick={handleOpenForm}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-        >
-          予約を作成
-        </button>
+        <div className="flex items-center space-x-4">
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setViewMode('timetable')}
+              className={`px-4 py-2 rounded-md ${
+                viewMode === 'timetable'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              タイムテーブル
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-4 py-2 rounded-md ${
+                viewMode === 'list'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              リスト
+            </button>
+          </div>
+          <button
+            onClick={handleOpenForm}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          >
+            予約を作成
+          </button>
+        </div>
       </div>
 
       {message && (
@@ -348,87 +521,76 @@ export default function ReservePage() {
         </div>
       )}
 
-      {isFormOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">{isEditing ? '予約を編集' : '予約を作成'}</h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">タイトル</label>
-                <input
-                  type="text"
-                  name="title"
-                  value={formData.title}
-                  onChange={handleInputChange}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">開始時間</label>
-                <input
-                  type="datetime-local"
-                  name="start_time"
-                  value={formData.start_time}
-                  onChange={handleInputChange}
-                  step="900"
-                  className={`mt-1 block w-full rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 ${
-                    error ? 'border-red-300' : 'border-gray-300'
-                  }`}
-                  required
-                />
-                <p className="mt-1 text-sm text-gray-500">15分単位で選択してください</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">終了時間</label>
-                <input
-                  type="datetime-local"
-                  name="end_time"
-                  value={formData.end_time}
-                  onChange={handleInputChange}
-                  step="900"
-                  className={`mt-1 block w-full rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 ${
-                    error ? 'border-red-300' : 'border-gray-300'
-                  }`}
-                  required
-                />
-                <p className="mt-1 text-sm text-gray-500">15分単位で選択してください</p>
-                {error && (
-                  <p className="mt-1 text-sm text-red-600">{error}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">説明</label>
-                <textarea
-                  name="description"
-                  value={formData.description}
-                  onChange={handleInputChange}
-                  rows={3}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                />
-              </div>
-              <div className="flex justify-end space-x-4">
-                <button
-                  type="button"
-                  onClick={handleCloseForm}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                >
-                  {isEditing ? '更新' : '作成'}
-                </button>
-              </div>
-            </form>
-          </div>
+      {error && (
+        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded-lg">
+          {error}
         </div>
       )}
 
-      {reserves.length === 0 ? (
-        <div className="text-center text-gray-500">予約がありません</div>
+      {viewMode === 'timetable' ? (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="flex justify-between items-center p-4 border-b">
+            <button
+              onClick={() => moveWeek('prev')}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            >
+              ← 前週
+            </button>
+            <h2 className="text-lg font-semibold">
+              {currentWeekStart.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })} 〜
+              {new Date(currentWeekStart.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })}
+            </h2>
+            <button
+              onClick={() => moveWeek('next')}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            >
+              次週 →
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead>
+                <tr>
+                  <th className="w-24 px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">時間</th>
+                  {generateWeekDates().map((date) => (
+                    <th key={date.toISOString()} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      {date.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}
+                      <br />
+                      {['月', '火', '水', '木', '金'][date.getDay() - 1]}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                {generateTimeSlots().map((timeSlot) => (
+                  <tr key={timeSlot}>
+                    <td className="px-4 py-2 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                      {timeSlot}
+                    </td>
+                    {generateWeekDates().map((date) => {
+                      const dayReserves = organizeReservesByTimeSlot(date)[timeSlot] || []
+                      return (
+                        <td key={date.toISOString()} className="px-4 py-2">
+                          {dayReserves.map((reserve) => (
+                            <div
+                              key={reserve.id}
+                              className="mb-1 p-2 bg-indigo-100 dark:bg-indigo-900 rounded text-sm"
+                            >
+                              <div className="font-medium">{reserve.title}</div>
+                              <div className="text-xs text-gray-600 dark:text-gray-300">
+                                {reserve.profile?.name || '未設定'}
+                              </div>
+                            </div>
+                          ))}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full bg-white dark:bg-gray-800 rounded-lg shadow">
@@ -440,6 +602,7 @@ export default function ReservePage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">時間</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">タイトル</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">説明</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">グループ</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">操作</th>
               </tr>
             </thead>
@@ -464,6 +627,22 @@ export default function ReservePage() {
                   <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
                     {reserve.description || '未設定'}
                   </td>
+                  <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
+                    {reserve.groups && reserve.groups.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {reserve.groups.map((group) => (
+                          <span
+                            key={group.id}
+                            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+                          >
+                            {group.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      '未設定'
+                    )}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                     {reserve.user_id === currentUserId && (
                       <button
@@ -478,6 +657,150 @@ export default function ReservePage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {isFormOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold mb-4">{isEditing ? '予約を編集' : '予約を作成'}</h2>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">タイトル</label>
+                <input
+                  type="text"
+                  name="title"
+                  value={formData.title}
+                  onChange={handleInputChange}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">日付</label>
+                  <input
+                    type="date"
+                    name="date"
+                    value={formData.start_time.split('T')[0]}
+                    onChange={(e) => {
+                      const date = e.target.value;
+                      const [_, time] = formData.start_time.split('T');
+                      setFormData(prev => ({
+                        ...prev,
+                        start_time: `${date}T${time}`,
+                        end_time: `${date}T${formData.end_time.split('T')[1]}`
+                      }));
+                    }}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">開始時間</label>
+                  <select
+                    name="start_time"
+                    value={formData.start_time.split('T')[1]}
+                    onChange={(e) => {
+                      const time = e.target.value;
+                      const [date] = formData.start_time.split('T');
+                      setFormData(prev => ({
+                        ...prev,
+                        start_time: `${date}T${time}`
+                      }));
+                    }}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                    required
+                  >
+                    <option value="">選択してください</option>
+                    {timeOptions.map((time) => (
+                      <option key={time} value={time}>
+                        {time}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">終了時間</label>
+                  <select
+                    name="end_time"
+                    value={formData.end_time.split('T')[1]}
+                    onChange={(e) => {
+                      const time = e.target.value;
+                      const [date] = formData.end_time.split('T');
+                      setFormData(prev => ({
+                        ...prev,
+                        end_time: `${date}T${time}`
+                      }));
+                    }}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                    required
+                  >
+                    <option value="">選択してください</option>
+                    {timeOptions.map((time) => (
+                      <option key={time} value={time}>
+                        {time}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">説明</label>
+                <textarea
+                  name="description"
+                  value={formData.description}
+                  onChange={handleInputChange}
+                  rows={3}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  関連グループ
+                </label>
+                <div className="border rounded-lg p-4 max-h-40 overflow-y-auto bg-white dark:bg-gray-700">
+                  {groups.map((group) => (
+                    <div key={group.id} className="flex items-center space-x-2 mb-2 last:mb-0">
+                      <input
+                        type="checkbox"
+                        id={`group-${group.id}`}
+                        checked={formData.selectedGroups.includes(group.id)}
+                        onChange={() => toggleGroup(group.id)}
+                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                      />
+                      <label htmlFor={`group-${group.id}`} className="text-sm text-gray-700 dark:text-gray-300">
+                        {group.name}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-4 pt-4">
+                <button
+                  type="button"
+                  onClick={handleCloseForm}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                >
+                  {isEditing ? '更新' : '作成'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
