@@ -111,72 +111,100 @@ export default function UsersPage() {
   return (
     <div className="p-4">
       <h1 className="text-2xl font-bold mb-4">ユーザー一覧</h1>
-      <div className="grid gap-4">
-        {profiles.map((profile) => (
-          <div
-            key={profile.id}
-            className="border rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow"
-          >
-            {editingProfile?.id === profile.id ? (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    名前
-                  </label>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    組織
-                  </label>
-                  <input
-                    type="text"
-                    value={editOrganization}
-                    onChange={(e) => setEditOrganization(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSave}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
-                  >
-                    保存
-                  </button>
-                  <button
-                    onClick={handleCancel}
-                    className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
-                  >
-                    キャンセル
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <h2 className="text-xl font-semibold">{profile.name || '名前なし'}</h2>
-                <p className="text-gray-600">組織: {profile.organization || '未設定'}</p>
-                <p className="text-sm text-gray-500">
-                  作成日時: {new Date(profile.created_at).toLocaleString('ja-JP')}
-                </p>
-                {user && profile.user_id === user.id && (
-                  <button
-                    onClick={() => handleEdit(profile)}
-                    className="mt-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                  >
-                    編集
-                  </button>
+      <div className="overflow-x-auto">
+        <table className="min-w-full bg-white dark:bg-gray-800 rounded-lg overflow-hidden">
+          <thead className="bg-gray-100 dark:bg-gray-700">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                名前
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                組織
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                作成日時
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                操作
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+            {profiles.map((profile) => (
+              <tr key={profile.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                {editingProfile?.id === profile.id ? (
+                  <>
+                    <td className="px-6 py-4">
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
+                      />
+                    </td>
+                    <td className="px-6 py-4">
+                      <input
+                        type="text"
+                        value={editOrganization}
+                        onChange={(e) => setEditOrganization(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
+                      />
+                    </td>
+                    <td className="px-6 py-4">
+                      {new Date(profile.created_at).toLocaleString('ja-JP')}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSave}
+                          className="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors text-sm"
+                        >
+                          保存
+                        </button>
+                        <button
+                          onClick={handleCancel}
+                          className="px-3 py-1 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors text-sm"
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {profile.name || '名前なし'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                        {profile.organization || '未設定'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                        {new Date(profile.created_at).toLocaleString('ja-JP')}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {user && profile.user_id === user.id && (
+                        <button
+                          onClick={() => handleEdit(profile)}
+                          className="px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm"
+                        >
+                          編集
+                        </button>
+                      )}
+                    </td>
+                  </>
                 )}
-              </>
-            )}
-          </div>
-        ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
         {profiles.length === 0 && (
-          <p className="text-gray-500">ユーザーがありません。</p>
+          <p className="text-gray-500 text-center py-4">ユーザーがありません。</p>
         )}
       </div>
     </div>
