@@ -32,6 +32,7 @@ export default function Header() {
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut()
+      setUser(null)
       router.push('/auth/login')
     } catch (error) {
       console.error('Error logging out:', error)
@@ -51,6 +52,14 @@ export default function Header() {
                 }`}
               >
                 ホーム
+              </Link>
+              <Link
+                href="/users"
+                className={`text-sm font-medium transition-colors hover:text-gray-900 dark:hover:text-white ${
+                  pathname === '/users' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'
+                }`}
+              >
+                ユーザー一覧
               </Link>
               {user && (
                 <Link
