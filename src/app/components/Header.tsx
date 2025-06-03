@@ -62,14 +62,24 @@ export default function Header() {
                 ユーザー一覧
               </Link>
               {user && (
-                <Link
-                  href="/profile"
-                  className={`text-sm font-medium transition-colors hover:text-gray-900 dark:hover:text-white ${
-                    pathname === '/profile' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'
-                  }`}
-                >
-                  プロフィール
-                </Link>
+                <>
+                  <Link
+                    href="/profile"
+                    className={`text-sm font-medium transition-colors hover:text-gray-900 dark:hover:text-white ${
+                      pathname === '/profile' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'
+                    }`}
+                  >
+                    プロフィール
+                  </Link>
+                  <Link
+                    href="/reserve"
+                    className={`text-sm font-medium transition-colors hover:text-gray-900 dark:hover:text-white ${
+                      pathname === '/reserve' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'
+                    }`}
+                  >
+                    予約一覧
+                  </Link>
+                </>
               )}
             </nav>
           </div>
