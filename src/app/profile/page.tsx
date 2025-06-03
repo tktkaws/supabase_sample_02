@@ -68,8 +68,24 @@ export default function ProfilePage() {
         .eq('user_id', user.id)
         .single()
 
+      let profileId: string
+
       if (fetchError) {
-        throw new Error('プロフィールが見つかりません')
+        // プロフィールが存在しない場合は新規作成
+        const { data: newProfile, error: insertError } = await supabase
+          .from('profiles')
+          .insert({
+            user_id: user.id,
+            name: formData.name,
+            organization: formData.organization
+          })
+          .select('id')
+          .single()
+
+        if (insertError) throw insertError
+        profileId = (newProfile as { id: string }).id
+      } else {
+        profileId = (existingProfile as { id: string }).id
       }
 
       // 既存レコードを更新
@@ -79,7 +95,7 @@ export default function ProfilePage() {
           name: formData.name,
           organization: formData.organization
         })
-        .eq('id', existingProfile.id)
+        .eq('id', profileId)
 
       if (updateError) throw updateError
 
