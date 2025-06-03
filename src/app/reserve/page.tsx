@@ -15,6 +15,9 @@ export default function ReservePage() {
   const [reserves, setReserves] = useState<ReserveWithProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [isFormOpen, setIsFormOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editingReserveId, setEditingReserveId] = useState<number | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     title: '',
     start_time: '',
@@ -27,6 +30,12 @@ export default function ReservePage() {
 
   useEffect(() => {
     fetchReserves()
+    // 現在のユーザーIDを取得
+    const getCurrentUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      setCurrentUserId(user?.id || null)
+    }
+    getCurrentUser()
   }, [])
 
   // 15分単位の時間を取得する関数
@@ -122,31 +131,31 @@ export default function ReservePage() {
     }
   }
 
-  // 予約時間の重複チェック
-  const checkTimeOverlap = (startTime: string, endTime: string) => {
-    if (!startTime || !endTime) return false
-
-    const newStart = new Date(startTime)
-    const newEnd = new Date(endTime)
-
-    // 開始時間が終了時間より後の場合は重複とみなす
-    if (newStart >= newEnd) {
-      return true
-    }
-
-    // 既存の予約と重複チェック
-    return reserves.some(reserve => {
-      if (!reserve.start_time || !reserve.end_time) return false
-      const existingStart = new Date(reserve.start_time)
-      const existingEnd = new Date(reserve.end_time)
-
-      // 新しい予約が既存の予約と重複するかチェック
-      return (
-        (newStart >= existingStart && newStart < existingEnd) || // 新しい開始時間が既存の予約時間内
-        (newEnd > existingStart && newEnd <= existingEnd) || // 新しい終了時間が既存の予約時間内
-        (newStart <= existingStart && newEnd >= existingEnd) // 新しい予約が既存の予約を完全に包含
-      )
+  // 編集モードでフォームを開く
+  const handleEdit = (reserve: ReserveWithProfile) => {
+    setEditingReserveId(reserve.id)
+    setFormData({
+      title: reserve.title || '',
+      start_time: reserve.start_time || '',
+      end_time: reserve.end_time || '',
+      description: reserve.description || ''
     })
+    setIsEditing(true)
+    setIsFormOpen(true)
+  }
+
+  // フォームを閉じる
+  const handleCloseForm = () => {
+    setIsFormOpen(false)
+    setIsEditing(false)
+    setEditingReserveId(null)
+    setFormData({
+      title: '',
+      start_time: '',
+      end_time: '',
+      description: ''
+    })
+    setError('')
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -172,7 +181,7 @@ export default function ReservePage() {
         
         // 開始時間と終了時間の両方が設定されている場合、重複チェック
         if (newData.start_time && newData.end_time) {
-          if (checkTimeOverlap(newData.start_time, newData.end_time)) {
+          if (checkTimeOverlap(newData.start_time, newData.end_time, editingReserveId)) {
             setError('選択された時間は既存の予約と重複しています')
           } else {
             setError('')
@@ -204,8 +213,8 @@ export default function ReservePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    // 重複チェック
-    if (checkTimeOverlap(formData.start_time, formData.end_time)) {
+    // 重複チェック（編集時は自分の予約との重複を無視）
+    if (checkTimeOverlap(formData.start_time, formData.end_time, editingReserveId)) {
       setError('選択された時間は既存の予約と重複しています')
       return
     }
@@ -214,33 +223,72 @@ export default function ReservePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const { error } = await supabase
-        .from('reserves')
-        .insert({
-          user_id: user.id,
-          title: formData.title,
-          start_time: formatDateTime(formData.start_time),
-          end_time: formatDateTime(formData.end_time),
-          description: formData.description
-        })
+      if (isEditing && editingReserveId) {
+        // 予約を更新
+        const { error } = await supabase
+          .from('reserves')
+          .update({
+            title: formData.title,
+            start_time: formatDateTime(formData.start_time),
+            end_time: formatDateTime(formData.end_time),
+            description: formData.description
+          })
+          .eq('id', editingReserveId)
+          .eq('user_id', user.id) // 自分の予約のみ更新可能
 
-      if (error) throw error
+        if (error) throw error
+        setMessage('予約を更新しました')
+      } else {
+        // 新規予約を作成
+        const { error } = await supabase
+          .from('reserves')
+          .insert({
+            user_id: user.id,
+            title: formData.title,
+            start_time: formatDateTime(formData.start_time),
+            end_time: formatDateTime(formData.end_time),
+            description: formData.description
+          })
 
-      setMessage('予約を作成しました')
+        if (error) throw error
+        setMessage('予約を作成しました')
+      }
+
       setError('')
-      setIsFormOpen(false)
-      setFormData({
-        title: '',
-        start_time: '',
-        end_time: '',
-        description: ''
-      })
+      handleCloseForm()
       fetchReserves()
     } catch (error) {
-      console.error('Error creating reserve:', error)
-      setMessage('予約の作成に失敗しました')
+      console.error('Error saving reserve:', error)
+      setMessage('予約の保存に失敗しました')
     }
     setTimeout(() => setMessage(''), 3000)
+  }
+
+  // 重複チェック関数を修正（編集時は自分の予約との重複を無視）
+  const checkTimeOverlap = (startTime: string, endTime: string, excludeReserveId: number | null = null) => {
+    if (!startTime || !endTime) return false
+
+    const newStart = new Date(startTime)
+    const newEnd = new Date(endTime)
+
+    if (newStart >= newEnd) {
+      return true
+    }
+
+    return reserves.some(reserve => {
+      // 編集時は自分の予約との重複を無視
+      if (excludeReserveId && reserve.id === excludeReserveId) return false
+      if (!reserve.start_time || !reserve.end_time) return false
+
+      const existingStart = new Date(reserve.start_time)
+      const existingEnd = new Date(reserve.end_time)
+
+      return (
+        (newStart >= existingStart && newStart < existingEnd) ||
+        (newEnd > existingStart && newEnd <= existingEnd) ||
+        (newStart <= existingStart && newEnd >= existingEnd)
+      )
+    })
   }
 
   // 日付表示用のフォーマット関数
@@ -303,7 +351,7 @@ export default function ReservePage() {
       {isFormOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
           <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">予約を作成</h2>
+            <h2 className="text-xl font-bold mb-4">{isEditing ? '予約を編集' : '予約を作成'}</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">タイトル</label>
@@ -362,7 +410,7 @@ export default function ReservePage() {
               <div className="flex justify-end space-x-4">
                 <button
                   type="button"
-                  onClick={() => setIsFormOpen(false)}
+                  onClick={handleCloseForm}
                   className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
                 >
                   キャンセル
@@ -371,7 +419,7 @@ export default function ReservePage() {
                   type="submit"
                   className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
                 >
-                  作成
+                  {isEditing ? '更新' : '作成'}
                 </button>
               </div>
             </form>
@@ -392,6 +440,7 @@ export default function ReservePage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">時間</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">タイトル</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">説明</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -414,6 +463,16 @@ export default function ReservePage() {
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
                     {reserve.description || '未設定'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {reserve.user_id === currentUserId && (
+                      <button
+                        onClick={() => handleEdit(reserve)}
+                        className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                      >
+                        編集
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
