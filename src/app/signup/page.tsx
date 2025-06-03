@@ -2,36 +2,50 @@
 
 import { useState } from 'react'
 import { createClient } from '@/app/utils/supabase/client'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
-export default function LoginPage() {
+export default function SignUpPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const message = searchParams.get('message')
   const supabase = createClient()
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      // サインアップ（メール確認なし）
+      const { error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          data: {
+            email_confirmed: true
+          }
+        },
+      })
+
+      if (signUpError) throw signUpError
+
+      // 直接ログイン
+      const { error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
 
-      if (error) throw error
+      if (signInError) throw signInError
 
+      // プロフィールページにリダイレクト
       router.push('/profile')
       router.refresh()
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'ログインに失敗しました')
+      setError(error instanceof Error ? error.message : 'サインアップに失敗しました')
     } finally {
       setLoading(false)
     }
@@ -42,15 +56,10 @@ export default function LoginPage() {
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
-            ログイン
+            アカウントを作成
           </h2>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
-          {message && (
-            <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative" role="alert">
-              <span className="block sm:inline">{message}</span>
-            </div>
-          )}
+        <form className="mt-8 space-y-6" onSubmit={handleSignUp}>
           {error && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
               <span className="block sm:inline">{error}</span>
@@ -91,17 +100,17 @@ export default function LoginPage() {
               disabled={loading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
-              {loading ? '処理中...' : 'ログイン'}
+              {loading ? '処理中...' : 'サインアップ'}
             </button>
           </div>
 
           <div className="text-sm text-center">
-            <Link href="/signup" className="font-medium text-indigo-600 hover:text-indigo-500">
-              アカウントをお持ちでない方はこちら
+            <Link href="/login" className="font-medium text-indigo-600 hover:text-indigo-500">
+              すでにアカウントをお持ちの方はこちら
             </Link>
           </div>
         </form>
       </div>
     </div>
   )
-}
+} 
