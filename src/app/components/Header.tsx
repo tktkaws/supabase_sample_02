@@ -33,7 +33,7 @@ export default function Header() {
     try {
       await supabase.auth.signOut()
       setUser(null)
-      router.push('/auth/login')
+      router.push('/login')
     } catch (error) {
       console.error('Error logging out:', error)
     }
@@ -63,6 +63,14 @@ export default function Header() {
               </Link>
               {user && (
                 <>
+                  <Link
+                    href="/groups"
+                    className={`text-sm font-medium transition-colors hover:text-gray-900 dark:hover:text-white ${
+                      pathname.startsWith('/groups') ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'
+                    }`}
+                  >
+                    グループ一覧
+                  </Link>
                   <Link
                     href="/profile"
                     className={`text-sm font-medium transition-colors hover:text-gray-900 dark:hover:text-white ${
@@ -98,12 +106,20 @@ export default function Header() {
                   </button>
                 </div>
               ) : (
-                <Link
-                  href="/auth/login"
-                  className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm px-4 py-2"
-                >
-                  ログイン
-                </Link>
+                <div className="flex items-center gap-4">
+                  <Link
+                    href="/signup"
+                    className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm px-4 py-2"
+                  >
+                    サインアップ
+                  </Link>
+                  <Link
+                    href="/login"
+                    className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm px-4 py-2"
+                  >
+                    ログイン
+                  </Link>
+                </div>
               )
             )}
           </div>
