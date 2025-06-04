@@ -21,12 +21,16 @@ export default function ReservePage() {
   const [isEditing, setIsEditing] = useState(false)
   const [editingReserveId, setEditingReserveId] = useState<number | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'list' | 'timetable'>('timetable')
+  const [viewMode, setViewMode] = useState<'list' | 'timetable' | 'monthly'>('timetable')
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const now = new Date()
     const day = now.getDay()
     const diff = now.getDate() - day + (day === 0 ? -6 : 1)
     return new Date(now.setDate(diff))
+  })
+  const [currentMonthStart, setCurrentMonthStart] = useState(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1)
   })
   const [formData, setFormData] = useState({
     title: '',
@@ -37,6 +41,8 @@ export default function ReservePage() {
   })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [selectedReserve, setSelectedReserve] = useState<ReserveWithProfile | null>(null)
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
   const supabase = createClient()
 
   useEffect(() => {
@@ -104,8 +110,6 @@ export default function ReservePage() {
   const handleOpenForm = () => {
     const roundedTime = getRoundedTime()
     const endTime = getOneHourLater(roundedTime)
-    console.log('Start time:', roundedTime)
-    console.log('End time:', endTime)
     setFormData(prev => ({
       ...prev,
       start_time: roundedTime,
@@ -170,10 +174,34 @@ export default function ReservePage() {
   // 編集モードでフォームを開く
   const handleEdit = (reserve: ReserveWithProfile) => {
     setEditingReserveId(reserve.id)
+    const startTime = reserve.start_time ? new Date(reserve.start_time) : new Date()
+    const endTime = reserve.end_time ? new Date(reserve.end_time) : new Date()
+    
+    // 時間を15分単位に丸める
+    const roundToNearest15 = (date: Date) => {
+      const minutes = date.getMinutes()
+      const roundedMinutes = Math.round(minutes / 15) * 15
+      date.setMinutes(roundedMinutes)
+      return date
+    }
+
+    const roundedStartTime = roundToNearest15(startTime)
+    const roundedEndTime = roundToNearest15(endTime)
+    
+    // 時間をHH:mm形式に変換
+    const formatTimeToHHmm = (date: Date) => {
+      const hours = String(date.getHours()).padStart(2, '0')
+      const minutes = String(date.getMinutes()).padStart(2, '0')
+      return `${hours}:${minutes}`
+    }
+
+    const startTimeStr = formatTimeToHHmm(roundedStartTime)
+    const endTimeStr = formatTimeToHHmm(roundedEndTime)
+    
     setFormData({
       title: reserve.title || '',
-      start_time: reserve.start_time || '',
-      end_time: reserve.end_time || '',
+      start_time: `${roundedStartTime.toISOString().split('T')[0]}T${startTimeStr}`,
+      end_time: `${roundedEndTime.toISOString().split('T')[0]}T${endTimeStr}`,
       description: reserve.description || '',
       selectedGroups: reserve.groups?.map(group => group.id) || []
     })
@@ -439,14 +467,23 @@ export default function ReservePage() {
     return dates
   }
 
-  // 時間帯を生成する関数
+  // 時間帯を生成する関数（表示用）
+  const generateDisplayTimeSlots = () => {
+    const slots = []
+    for (let hour = 9; hour <= 18; hour++) {
+      slots.push(`${String(hour).padStart(2, '0')}:00`)
+    }
+    return slots
+  }
+
+  // 時間帯を生成する関数（内部管理用）
   const generateTimeSlots = () => {
     const slots = []
     for (let hour = 9; hour <= 18; hour++) {
-      for (let minute = 0; minute < 60; minute += 30) {
-        if (hour === 18 && minute > 0) continue
-        slots.push(`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`)
-      }
+      slots.push(`${String(hour).padStart(2, '0')}:00`)
+      slots.push(`${String(hour).padStart(2, '0')}:15`)
+      slots.push(`${String(hour).padStart(2, '0')}:30`)
+      slots.push(`${String(hour).padStart(2, '0')}:45`)
     }
     return slots
   }
@@ -468,11 +505,116 @@ export default function ReservePage() {
     return organizedReserves
   }
 
+  // 予約の表示位置を計算する関数
+  const calculateReservePosition = (startTime: string | null) => {
+    if (!startTime) return '0'
+    const minutes = new Date(startTime).getMinutes()
+    return minutes === 0 ? '0' : '1em'
+  }
+
+  // 予約の高さを計算する関数
+  const calculateReserveHeight = (startTime: string | null, endTime: string | null) => {
+    if (!startTime || !endTime) return 'auto'
+    const start = new Date(startTime)
+    const end = new Date(endTime)
+    const diffMinutes = (end.getTime() - start.getTime()) / (1000 * 60)
+    return `${Math.max(1, Math.ceil(diffMinutes / 15))}em`
+  }
+
   // 週を移動する関数
   const moveWeek = (direction: 'prev' | 'next') => {
     const newDate = new Date(currentWeekStart)
     newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7))
     setCurrentWeekStart(newDate)
+  }
+
+  // 今日の週の月曜日を取得する関数
+  const getCurrentWeekMonday = () => {
+    const now = new Date()
+    const day = now.getDay()
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1)
+    return new Date(now.setDate(diff))
+  }
+
+  // 今日の週に移動する関数
+  const moveToCurrentWeek = () => {
+    setCurrentWeekStart(getCurrentWeekMonday())
+  }
+
+  // 今日の日付かどうかを判定する関数
+  const isToday = (date: Date) => {
+    const today = new Date()
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear()
+  }
+
+  // 月の日付を生成する関数
+  const generateMonthDates = () => {
+    const dates = []
+    const year = currentMonthStart.getFullYear()
+    const month = currentMonthStart.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    
+    // 前月の日付を追加
+    const firstDayOfWeek = firstDay.getDay()
+    for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+      const date = new Date(year, month, -i)
+      dates.push(date)
+    }
+    
+    // 当月の日付を追加
+    for (let i = 1; i <= lastDay.getDate(); i++) {
+      dates.push(new Date(year, month, i))
+    }
+    
+    // 次月の日付を追加
+    const lastDayOfWeek = lastDay.getDay()
+    for (let i = 1; i < 7 - lastDayOfWeek; i++) {
+      dates.push(new Date(year, month + 1, i))
+    }
+    
+    return dates
+  }
+
+  // 月を移動する関数
+  const moveMonth = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentMonthStart)
+    newDate.setMonth(newDate.getMonth() + (direction === 'next' ? 1 : -1))
+    setCurrentMonthStart(newDate)
+  }
+
+  // 今日の月の1日を取得する関数
+  const getCurrentMonthFirstDay = () => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1)
+  }
+
+  // 今日の月に移動する関数
+  const moveToCurrentMonth = () => {
+    setCurrentMonthStart(getCurrentMonthFirstDay())
+  }
+
+  // 予約を日付ごとに整理する関数
+  const organizeReservesByDate = (date: Date) => {
+    return reserves.filter(reserve => {
+      if (!reserve.start_time) return false
+      const reserveDate = new Date(reserve.start_time)
+      return reserveDate.toDateString() === date.toDateString()
+    })
+  }
+
+  // 予約詳細を表示する関数
+  const handleShowDetail = (reserve: ReserveWithProfile) => {
+    setSelectedReserve(reserve)
+    setIsDetailOpen(true)
+  }
+
+  // 予約詳細を閉じる関数
+  const handleCloseDetail = () => {
+    setSelectedReserve(null)
+    setIsDetailOpen(false)
   }
 
   if (loading) {
@@ -481,7 +623,7 @@ export default function ReservePage() {
 
   return (
     <div className="max-w-7xl mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">予約一覧</h1>
         <div className="flex items-center space-x-4">
           <div className="flex space-x-2">
@@ -493,7 +635,17 @@ export default function ReservePage() {
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
             >
-              タイムテーブル
+              週
+            </button>
+            <button
+              onClick={() => setViewMode('monthly')}
+              className={`px-4 py-2 rounded-md ${
+                viewMode === 'monthly'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              月
             </button>
             <button
               onClick={() => setViewMode('list')}
@@ -527,18 +679,98 @@ export default function ReservePage() {
         </div>
       )}
 
-      {viewMode === 'timetable' ? (
+      {viewMode === 'monthly' ? (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-          <div className="flex justify-between items-center p-4 border-b">
+          <div className="flex justify-between items-center p-2 border-b">
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => moveMonth('prev')}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              >
+                ← 前月
+              </button>
+              <button
+                onClick={moveToCurrentMonth}
+                className="px-3 py-1 text-sm bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 rounded hover:bg-indigo-200 dark:hover:bg-indigo-800"
+              >
+                今日
+              </button>
+            </div>
+            <h2 className="text-lg font-semibold">
+              {currentMonthStart.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long' })}
+            </h2>
             <button
-              onClick={() => moveWeek('prev')}
+              onClick={() => moveMonth('next')}
               className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
             >
-              ← 前週
+              次月 →
             </button>
+          </div>
+          <div className="grid grid-cols-7 gap-px bg-gray-200 dark:bg-gray-700">
+            {['月', '火', '水', '木', '金', '土', '日'].map((day) => (
+              <div key={day} className="bg-gray-50 dark:bg-gray-800 p-2 text-center text-sm font-medium text-gray-700 dark:text-gray-300">
+                {day}
+              </div>
+            ))}
+            {generateMonthDates().map((date) => {
+              const dayReserves = organizeReservesByDate(date)
+              const isCurrentMonth = date.getMonth() === currentMonthStart.getMonth()
+              return (
+                <div
+                  key={date.toISOString()}
+                  className={`min-h-[100px] p-2 ${
+                    isCurrentMonth
+                      ? 'bg-white dark:bg-gray-800'
+                      : 'bg-gray-50 dark:bg-gray-900'
+                  }`}
+                >
+                  <div className={`text-sm font-medium ${
+                    isToday(date)
+                      ? 'text-indigo-600 dark:text-indigo-400'
+                      : isCurrentMonth
+                        ? 'text-gray-900 dark:text-gray-100'
+                        : 'text-gray-400 dark:text-gray-500'
+                  }`}>
+                    {date.getDate()}
+                  </div>
+                  <div className="mt-1 space-y-1">
+                    {dayReserves.map((reserve) => (
+                      <div
+                        key={reserve.id}
+                        className={`p-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded truncate cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 ${
+                          reserve.user_id === currentUserId ? 'ring-1 ring-indigo-300 dark:ring-indigo-600' : ''
+                        }`}
+                        onClick={() => handleShowDetail(reserve)}
+                      >
+                        {reserve.title}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : viewMode === 'timetable' ? (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="flex justify-between items-center p-2 border-b">
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => moveWeek('prev')}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              >
+                ← 前週
+              </button>
+              <button
+                onClick={moveToCurrentWeek}
+                className="px-3 py-1 text-sm bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 rounded hover:bg-indigo-200 dark:hover:bg-indigo-800"
+              >
+                今日
+              </button>
+            </div>
             <h2 className="text-lg font-semibold">
               {currentWeekStart.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })} 〜
-              {new Date(currentWeekStart.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })}
+              {new Date(currentWeekStart.getTime() + 4 * 24 * 60 * 60 * 1000).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })}
             </h2>
             <button
               onClick={() => moveWeek('next')}
@@ -547,48 +779,147 @@ export default function ReservePage() {
               次週 →
             </button>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead>
-                <tr>
-                  <th className="w-24 px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">時間</th>
-                  {generateWeekDates().map((date) => (
-                    <th key={date.toISOString()} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                      {date.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}
-                      <br />
-                      {['月', '火', '水', '木', '金'][date.getDay() - 1]}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {generateTimeSlots().map((timeSlot) => (
-                  <tr key={timeSlot}>
-                    <td className="px-4 py-2 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap">
-                      {timeSlot}
-                    </td>
-                    {generateWeekDates().map((date) => {
-                      const dayReserves = organizeReservesByTimeSlot(date)[timeSlot] || []
+          <div className="grid grid-cols-[0.5fr_repeat(5,1fr)] gap-px bg-gray-200 dark:bg-gray-700">
+            <div className="flex flex-col">
+              <div className="h-12 grid items-center text-center bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                <div className="text-sm font-medium">時間</div>
+              </div>
+              <div className="h-[800px] bg-white dark:bg-gray-800">
+                <div className="h-full grid grid-rows-[repeat(36,1fr)] border border-gray-200 dark:border-gray-700">
+                  {Array.from({ length: 36 }, (_, i) => {
+                    const hour = Math.floor(i / 4) + 9;
+                    const minute = (i % 4) * 15;
+                    const timeString = `${String(hour).padStart(2, '0')}${String(minute).padStart(2, '0')}`;
+                    return (
+                      <div
+                        key={timeString}
+                        data-time={timeString}
+                        className={`text-xs text-right font-bold text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 ${
+                          i % 4 === 0 ? 'border-t-2' : ''
+                        }`}
+                      >
+                        {minute === 0 ? `${hour}:00` : ''}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            {generateWeekDates().map((date) => (
+              <div key={date.toISOString()} className="flex flex-col">
+                <div className={`text-center h-12 grid items-center ${
+                  isToday(date)
+                    ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                }`}>
+                  <div className="text-sm font-medium">
+                    {['月', '火', '水', '木', '金'][date.getDay() - 1]}
+                  </div>
+                  <div className={`text-base font-semibold ${
+                    isToday(date)
+                      ? 'text-indigo-600 dark:text-indigo-400'
+                      : 'text-gray-900 dark:text-gray-100'
+                  }`}>
+                    {date.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}
+                  </div>
+                </div>
+                <div className="h-[800px] bg-white dark:bg-gray-800">
+                  <div className="h-full grid grid-rows-[repeat(36,1fr)] border border-gray-200 dark:border-gray-700 relative">
+                    {Array.from({ length: 36 }, (_, i) => {
+                      const hour = Math.floor(i / 4) + 9;
+                      const minute = (i % 4) * 15;
+                      const timeString = `${String(hour).padStart(2, '0')}${String(minute).padStart(2, '0')}`;
                       return (
-                        <td key={date.toISOString()} className="px-4 py-2">
-                          {dayReserves.map((reserve) => (
-                            <div
-                              key={reserve.id}
-                              className="mb-1 p-2 bg-indigo-100 dark:bg-indigo-900 rounded text-sm"
-                            >
-                              <div className="font-medium">{reserve.title}</div>
-                              <div className="text-xs text-gray-600 dark:text-gray-300">
-                                {reserve.profile?.name || '未設定'}
-                              </div>
-                            </div>
-                          ))}
-                        </td>
-                      )
+                        <a
+                          key={timeString}
+                          href="#"
+                          data-time={timeString}
+                          className={`text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 ${
+                            i % 4 === 0 ? 'border-t-2' : ''
+                          } hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const [datePart] = date.toISOString().split('T');
+                            const hour = Math.floor(i / 4) + 9;
+                            const minute = (i % 4) * 15;
+                            const startTime = `${datePart}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+                            const endTime = getOneHourLater(startTime);
+                            setFormData(prev => ({
+                              ...prev,
+                              start_time: startTime,
+                              end_time: endTime
+                            }));
+                            setIsFormOpen(true);
+                          }}
+                        />
+                      );
                     })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    {reserves
+                      .filter(reserve => {
+                        if (!reserve.start_time) return false;
+                        const reserveDate = new Date(reserve.start_time);
+                        return (
+                          reserveDate.getFullYear() === date.getFullYear() &&
+                          reserveDate.getMonth() === date.getMonth() &&
+                          reserveDate.getDate() === date.getDate()
+                        );
+                      })
+                      .map(reserve => {
+                        if (!reserve.start_time || !reserve.end_time) return null;
+                        const startDate = new Date(reserve.start_time);
+                        const endDate = new Date(reserve.end_time);
+                        const startHour = startDate.getHours();
+                        const startMinute = startDate.getMinutes();
+                        const endHour = endDate.getHours();
+                        const endMinute = endDate.getMinutes();
+                        
+                        const startTimeString = `${String(startHour).padStart(2, '0')}${String(startMinute).padStart(2, '0')}`;
+                        const endTimeString = `${String(endHour).padStart(2, '0')}${String(endMinute).padStart(2, '0')}`;
+                        
+                        const startIndex = Array.from({ length: 36 }, (_, i) => {
+                          const hour = Math.floor(i / 4) + 9;
+                          const minute = (i % 4) * 15;
+                          return `${String(hour).padStart(2, '0')}${String(minute).padStart(2, '0')}`;
+                        }).indexOf(startTimeString);
+                        
+                        const endIndex = Array.from({ length: 36 }, (_, i) => {
+                          const hour = Math.floor(i / 4) + 9;
+                          const minute = (i % 4) * 15;
+                          return `${String(hour).padStart(2, '0')}${String(minute).padStart(2, '0')}`;
+                        }).indexOf(endTimeString);
+                        
+                        if (startIndex === -1 || endIndex === -1) return null;
+                        
+                        const gridSpan = endIndex - startIndex;
+                        const isShortReserve = gridSpan === 1;
+                        
+                        return (
+                          <div
+                            key={reserve.id}
+                            className={`absolute left-0 right-0 p-1 mx-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 ${
+                              reserve.user_id === currentUserId ? 'ring-1 ring-indigo-300 dark:ring-indigo-600' : ''
+                            }`}
+                            style={{
+                              top: `calc(${(startIndex / 36) * 100}% + 2px)`,
+                              height: `calc(${(gridSpan / 36) * 100}% - 4px)`,
+                            }}
+                            onClick={() => handleShowDetail(reserve)}
+                          >
+                            <div className={`font-medium truncate ${isShortReserve ? '' : 'mb-1'}`}>
+                              {reserve.title}
+                            </div>
+                            {!isShortReserve && (
+                              <div className="text-xs text-gray-600 dark:text-gray-400">
+                                {formatTime(reserve.start_time)} - {formatTime(reserve.end_time)}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       ) : (
@@ -661,7 +992,14 @@ export default function ReservePage() {
       )}
 
       {isFormOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseForm()
+            }
+          }}
+        >
           <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
             <h2 className="text-xl font-bold mb-4">{isEditing ? '予約を編集' : '予約を作成'}</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -716,9 +1054,8 @@ export default function ReservePage() {
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
                     required
                   >
-                    <option value="">選択してください</option>
                     {timeOptions.map((time) => (
-                      <option key={time} value={time}>
+                      <option key={time} value={time} selected={time === formData.start_time.split('T')[1]}>
                         {time}
                       </option>
                     ))}
@@ -741,9 +1078,8 @@ export default function ReservePage() {
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
                     required
                   >
-                    <option value="">選択してください</option>
                     {timeOptions.map((time) => (
-                      <option key={time} value={time}>
+                      <option key={time} value={time} selected={time === formData.end_time.split('T')[1]}>
                         {time}
                       </option>
                     ))}
@@ -800,6 +1136,85 @@ export default function ReservePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {isDetailOpen && selectedReserve && (
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseDetail()
+            }
+          }}
+        >
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md shadow-xl">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-xl font-bold">{selectedReserve.title || '無題'}</h2>
+              <button
+                onClick={handleCloseDetail}
+                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">予約者</h3>
+                <p className="mt-1 text-gray-900 dark:text-gray-100">
+                  {selectedReserve.profile?.name || '未設定'}
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">所属</h3>
+                <p className="mt-1 text-gray-900 dark:text-gray-100">
+                  {selectedReserve.profile?.organization || '未設定'}
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">日時</h3>
+                <p className="mt-1 text-gray-900 dark:text-gray-100">
+                  {formatDisplayDate(selectedReserve.start_time)} {formatTimeRange(selectedReserve.start_time, selectedReserve.end_time)}
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">説明</h3>
+                <p className="mt-1 text-gray-900 dark:text-gray-100">
+                  {selectedReserve.description || '未設定'}
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">グループ</h3>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {selectedReserve.groups && selectedReserve.groups.length > 0 ? (
+                    selectedReserve.groups.map((group) => (
+                      <span
+                        key={group.id}
+                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+                      >
+                        {group.name}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-gray-500 dark:text-gray-400">未設定</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {selectedReserve.user_id === currentUserId && (
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={() => {
+                    handleCloseDetail()
+                    handleEdit(selectedReserve)
+                  }}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                >
+                  編集
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
