@@ -196,15 +196,39 @@ export default function ReservePage() {
   }
 
   // フォームを開く時に初期時間を設定
-  const handleOpenForm = () => {
-    const roundedTime = getRoundedTime()
-    const endTime = getOneHourLater(roundedTime)
-    setFormData(prev => ({
-      ...prev,
-      start_time: roundedTime,
-      end_time: endTime
-    }))
+  const handleOpenForm = (selectedDate?: Date) => {
+    const now = new Date()
+    const hours = now.getHours()
+    const minutes = Math.ceil(now.getMinutes() / 15) * 15
+    
+    let formattedDate: string
+    if (selectedDate) {
+      formattedDate = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`
+    } else {
+      formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    }
+    
+    const startTime = `${formattedDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+    const endTime = getOneHourLater(startTime)
+    
+    setFormData({
+      title: '',
+      start_time: startTime,
+      end_time: endTime,
+      description: '',
+      selectedGroups: [],
+      isRecurring: false,
+      recurringWeeks: 1
+    })
+    
+    setIsEditing(false)
+    setEditingReserveId(null)
     setIsFormOpen(true)
+  }
+
+  // 日付セルをクリックした時の処理
+  const handleDateCellClick = (date: Date) => {
+    handleOpenForm(date)
   }
 
   // 編集モードでフォームを開く
@@ -745,25 +769,34 @@ export default function ReservePage() {
     const dates = []
     const year = currentMonthStart.getFullYear()
     const month = currentMonthStart.getMonth()
+    
+    // 月の最初の日を取得
     const firstDay = new Date(year, month, 1)
+    // 月の最後の日を取得
     const lastDay = new Date(year, month + 1, 0)
     
-    // 前月の日付を追加
+    // 月の最初の日の曜日を取得（0: 日曜日, 1: 月曜日, ...）
     const firstDayOfWeek = firstDay.getDay()
-    for (let i = firstDayOfWeek - 1; i >= 0; i--) {
-      const date = new Date(year, month, -i)
+    
+    // 前月の日付を追加（月曜日まで）
+    const daysToAdd = firstDayOfWeek === 0 ? 6 : firstDayOfWeek - 1
+    for (let i = daysToAdd; i > 0; i--) {
+      const date = new Date(year, month, 1 - i)
       dates.push(date)
     }
     
     // 当月の日付を追加
     for (let i = 1; i <= lastDay.getDate(); i++) {
-      dates.push(new Date(year, month, i))
+      const date = new Date(year, month, i)
+      dates.push(date)
     }
     
-    // 次月の日付を追加
+    // 次月の日付を追加（日曜日まで）
     const lastDayOfWeek = lastDay.getDay()
-    for (let i = 1; i < 7 - lastDayOfWeek; i++) {
-      dates.push(new Date(year, month + 1, i))
+    const daysToAddNext = lastDayOfWeek === 0 ? 0 : 7 - lastDayOfWeek
+    for (let i = 1; i <= daysToAddNext; i++) {
+      const date = new Date(year, month + 1, i)
+      dates.push(date)
     }
     
     return dates
@@ -976,7 +1009,7 @@ export default function ReservePage() {
             </button>
           </div>
           <button
-            onClick={handleOpenForm}
+            onClick={() => handleOpenForm()}
             className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
           >
             予約を作成
@@ -1023,23 +1056,78 @@ export default function ReservePage() {
               次月 →
             </button>
           </div>
-          <div className="grid grid-cols-7 gap-px bg-gray-200 dark:bg-gray-700">
-            {['月', '火', '水', '木', '金', '土', '日'].map((day) => (
-              <div key={day} className="bg-gray-50 dark:bg-gray-800 p-2 text-center text-sm font-medium text-gray-700 dark:text-gray-300">
+          <div className="grid grid-cols-[repeat(5,1fr)_0.5fr_0.5fr] gap-px bg-gray-200 dark:bg-gray-700">
+            {['月', '火', '水', '木', '金', '土', '日'].map((day, index) => (
+              <div 
+                key={day} 
+                className={`bg-gray-50 dark:bg-gray-800 p-2 text-center text-sm font-medium text-gray-700 dark:text-gray-300 ${
+                  index >= 5 ? 'text-xs' : ''
+                }`}
+              >
                 {day}
               </div>
             ))}
             {generateMonthDates().map((date) => {
               const dayReserves = organizeReservesByDate(date)
               const isCurrentMonth = date.getMonth() === currentMonthStart.getMonth()
-              return (
+              const dayOfWeek = date.getDay()
+              const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+              return isWeekend ? (
                 <div
                   key={date.toISOString()}
-                  className={`min-h-[100px] p-2 ${
+                  className={`block min-h-[100px] p-2 ${
+                    isCurrentMonth
+                      ? 'bg-gray-50 dark:bg-gray-900'
+                      : 'bg-gray-50/50 dark:bg-gray-900'
+                  }`}
+                >
+                  <div className={`text-sm font-medium ${
+                    isToday(date)
+                      ? 'text-indigo-600 dark:text-indigo-400'
+                      : isCurrentMonth
+                        ? 'text-gray-400 dark:text-gray-500'
+                        : 'text-gray-400 dark:text-gray-500'
+                  }`}>
+                    {date.getDate()}
+                  </div>
+                  <div className="mt-1 space-y-1">
+                    {dayReserves.map((reserve) => (
+                      <div
+                        key={reserve.id}
+                        className={`p-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded truncate cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800${reserve.reserve_group ? ' border-l-4 border-blue-700 dark:border-blue-400' : ''}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          handleShowDetail(reserve)
+                        }}
+                        style={{ position: 'relative' }}
+                      >
+                        {reserve.user_id === currentUserId && (
+                          <span style={{ position: 'absolute', top: 2, right: 2 }}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="text-gray-400 dark:text-gray-500">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                            </svg>
+                          </span>
+                        )}
+                        {formatTime(reserve.start_time)} - {formatTime(reserve.end_time)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <a
+                  href="#"
+                  key={date.toISOString()}
+                  className={`block min-h-[100px] p-2 ${
                     isCurrentMonth
                       ? 'bg-white dark:bg-gray-800'
                       : 'bg-gray-50 dark:bg-gray-900'
                   }`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    handleDateCellClick(date)
+                  }}
                 >
                   <div className={`text-sm font-medium ${
                     isToday(date)
@@ -1054,16 +1142,27 @@ export default function ReservePage() {
                     {dayReserves.map((reserve) => (
                       <div
                         key={reserve.id}
-                        className={`p-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded truncate cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 ${
-                          reserve.user_id === currentUserId ? 'ring-1 ring-indigo-300 dark:ring-indigo-600' : ''
-                        }`}
-                        onClick={() => handleShowDetail(reserve)}
+                        className={`p-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded truncate cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800${reserve.reserve_group ? ' border-l-4 border-blue-700 dark:border-blue-400' : ''}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          handleShowDetail(reserve)
+                        }}
+                        style={{ position: 'relative' }}
                       >
-                        {reserve.title}
+                        {reserve.user_id === currentUserId && (
+                          <span style={{ position: 'absolute', top: 2, right: 2 }}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="text-gray-400 dark:text-gray-500">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                            </svg>
+                          </span>
+                        )}
+                        {formatTime(reserve.start_time)} - {formatTime(reserve.end_time)}
                       </div>
                     ))}
                   </div>
-                </div>
+                </a>
               )
             })}
           </div>
@@ -1213,7 +1312,7 @@ export default function ReservePage() {
                         return (
                           <div
                             key={reserve.id}
-                            className={`absolute left-0 right-0 p-1 mx-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800`}
+                            className={`absolute left-0 right-0 p-1 mx-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800${reserve.reserve_group ? ' border-l-4 border-blue-700 dark:border-blue-400' : ''}`}
                             style={{
                               top: `calc(${(startIndex / 36) * 100}% + 2px)`,
                               height: `calc(${(gridSpan / 36) * 100}% - 4px)`,
