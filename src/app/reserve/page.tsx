@@ -13,6 +13,21 @@ type ReserveWithProfile = Reserve & {
   groups?: Group[]
 }
 
+// スタイルの追加（ファイルの先頭付近に追加）
+const fadeInOut = {
+  animation: 'fadeInOut 2s ease-in-out',
+}
+
+// グローバルスタイルの追加（ファイルの先頭付近に追加）
+const globalStyles = `
+  @keyframes fadeInOut {
+    0% { opacity: 0; transform: translateY(10px); }
+    10% { opacity: 1; transform: translateY(0); }
+    90% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-10px); }
+  }
+`
+
 export default function ReservePage() {
   const [reserves, setReserves] = useState<ReserveWithProfile[]>([])
   const [groups, setGroups] = useState<Group[]>([])
@@ -300,7 +315,7 @@ export default function ReservePage() {
             description: formData.description
           })
           .eq('id', editingReserveId)
-          .eq('user_id', user.id) // 自分の予約のみ更新可能
+          .eq('user_id', user.id)
 
         if (error) throw error
 
@@ -364,7 +379,7 @@ export default function ReservePage() {
       console.error('Error saving reserve:', error)
       setError('予約の保存に失敗しました')
     }
-    setTimeout(() => setMessage(''), 3000)
+    setTimeout(() => setMessage(''), 2000)
   }
 
   const toggleGroup = (groupId: number) => {
@@ -668,7 +683,7 @@ export default function ReservePage() {
       </div>
 
       {message && (
-        <div className="mb-4 p-4 bg-green-100 text-green-700 rounded-lg">
+        <div className="fixed bottom-4 right-4 bg-indigo-500 text-white px-4 py-2 rounded-lg shadow-lg animate-fade-in-out z-50">
           {message}
         </div>
       )}
@@ -896,15 +911,21 @@ export default function ReservePage() {
                         return (
                           <div
                             key={reserve.id}
-                            className={`absolute left-0 right-0 p-1 mx-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 ${
-                              reserve.user_id === currentUserId ? 'ring-1 ring-indigo-300 dark:ring-indigo-600' : ''
-                            }`}
+                            className={`absolute left-0 right-0 p-1 mx-1 text-xs bg-indigo-100 dark:bg-indigo-900 rounded cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800`}
                             style={{
                               top: `calc(${(startIndex / 36) * 100}% + 2px)`,
                               height: `calc(${(gridSpan / 36) * 100}% - 4px)`,
                             }}
                             onClick={() => handleShowDetail(reserve)}
                           >
+                            {reserve.user_id === currentUserId && (
+                              <div className="absolute top-1 right-1 w-3 h-3 text-gray-500 dark:text-gray-400">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
+                                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                                </svg>
+                              </div>
+                            )}
                             <div className={`font-medium truncate ${isShortReserve ? '' : 'mb-1'}`}>
                               {reserve.title}
                             </div>
