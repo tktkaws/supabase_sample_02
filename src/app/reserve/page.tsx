@@ -71,12 +71,28 @@ export default function ReservePage() {
   const [isConfirming, setIsConfirming] = useState<ConfirmMode>(false)
   const [deleteMode, setDeleteMode] = useState<'single' | 'all' | null>(null)
   const [profiles, setProfiles] = useState<Database['public']['Tables']['profiles']['Row'][]>([]) // 型を修正
+  const [groupMemberRelations, setGroupMemberRelations] = useState<{ group_id: number; user_id: string }[]>([])
   const supabase = createClient()
+
+  // グループとメンバーの関係を取得する関数
+  const fetchGroupMemberRelations = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_group_relations')
+        .select('group_id, user_id')
+
+      if (error) throw error
+      setGroupMemberRelations((data || []) as { group_id: number; user_id: string }[])
+    } catch (error) {
+      console.error('Error fetching group member relations:', error)
+    }
+  }
 
   useEffect(() => {
     fetchReserves()
     fetchGroups()
     fetchProfiles()
+    fetchGroupMemberRelations() // 追加
     // 現在のユーザーIDを取得
     const getCurrentUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -322,6 +338,17 @@ export default function ReservePage() {
 
     setIsEditing('single') // 単一予約編集モード
     setIsFormOpen(true)
+
+    // メンバーのチェックボックスを更新
+    setTimeout(() => {
+      selectedMemberIds.forEach(memberId => {
+        const checkbox = document.getElementById(`member-${memberId}`) as HTMLInputElement
+        if (checkbox) {
+          checkbox.checked = true
+          checkbox.dispatchEvent(new Event('change'))
+        }
+      })
+    }, 100) // フォームが表示された後に実行
   }
 
   // 編集モードを選択
@@ -1125,6 +1152,25 @@ export default function ReservePage() {
     }))
   }
 
+  // グループ選択時のメンバー自動選択関数
+  const handleGroupSelect = (groupId: number) => {
+    // 選択されたグループに所属するメンバーのIDを取得
+    const groupMemberIds = groupMemberRelations
+      .filter(relation => relation.group_id === groupId)
+      .map(relation => relation.user_id)
+    console.log(groupMemberIds)
+
+    // チェックボックスを自動的に選択状態にする
+    groupMemberIds.forEach(memberId => {
+      const checkbox = document.getElementById(`member-${memberId}`)
+      console.log("checkbox", checkbox)
+      if (checkbox) {
+        checkbox.checked = true
+        checkbox.dispatchEvent(new Event('change'));
+      }
+    })
+  }
+
   if (loading) {
     return <div className="flex justify-center items-center min-h-screen">読み込み中...</div>
   }
@@ -1744,11 +1790,12 @@ export default function ReservePage() {
                   {groups.map((group) => (
                     <div key={group.id} className="flex items-center space-x-2 mb-2 last:mb-0">
                       <input
-                        type="checkbox"
+                        type="radio"
                         id={`group-${group.id}`}
+                        name="selectedGroup"
                         checked={formData.selectedGroups.includes(group.id)}
-                        onChange={() => toggleGroup(group.id)}
-                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                        onChange={() => handleGroupSelect(group.id)}
+                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300"
                       />
                       <label htmlFor={`group-${group.id}`} className="text-sm text-gray-700 dark:text-gray-300">
                         {group.name}
@@ -1762,20 +1809,40 @@ export default function ReservePage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">参加メンバー</label>
                   <div className="mt-2 max-h-48 overflow-y-auto border rounded-md p-2">
-                    {profiles.map(profile => (
-                      <div key={profile.id} className="flex items-center space-x-2 py-1">
-                        <input
-                          type="checkbox"
-                          id={`member-${profile.id}`}
-                          checked={formData.selectedMembers.includes(profile.id)}
-                          onChange={() => toggleMember(profile.id)}
-                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <label htmlFor={`member-${profile.id}`} className="text-sm text-gray-700 dark:text-gray-300">
-                          {profile.name} {profile.organization ? `(${profile.organization})` : ''}
-                        </label>
-                      </div>
-                    ))}
+                    {profiles.map(profile => {
+                      // 現在選択されているグループに所属するメンバーかどうかを判定
+                      const isGroupMember = formData.selectedGroups.length > 0 && 
+                        groupMemberRelations.some(relation => 
+                          relation.group_id === formData.selectedGroups[0] && 
+                          relation.user_id === profile.user_id
+                        )
+
+                      return (
+                        <div key={profile.id} className="flex items-center space-x-2 py-1">
+                          <input
+                            type="checkbox"
+                            id={`member-${profile.id}`}
+                            checked={formData.selectedMembers.includes(profile.id)}
+                            onChange={() => toggleMember(profile.id)}
+                            className={`rounded border-gray-300 ${
+                              isGroupMember 
+                                ? 'text-indigo-600 focus:ring-indigo-500' 
+                                : 'text-gray-400 focus:ring-gray-500'
+                            }`}
+                          />
+                          <label 
+                            htmlFor={`member-${profile.id}`} 
+                            className={`text-sm ${
+                              isGroupMember 
+                                ? 'text-gray-700 dark:text-gray-300' 
+                                : 'text-gray-400 dark:text-gray-500'
+                            }`}
+                          >
+                            {profile.name} {profile.organization ? `(${profile.organization})` : ''}
+                          </label>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               </div>
