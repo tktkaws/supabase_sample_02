@@ -122,7 +122,6 @@ export default function ReservePage() {
         return
       }
 
-
       // 予約データを取得（全ての予約）
       const { data: reservesData, error: reservesError } = await supabase
         .from('reserves')
@@ -139,6 +138,14 @@ export default function ReservePage() {
             reserve_groups (
               id
             )
+          ),
+          reserve_member_relations (
+            member:profiles (
+              id,
+              name,
+              organization,
+              user_id
+            )
           )
         `)
         .order('start_time', { ascending: true })
@@ -148,12 +155,10 @@ export default function ReservePage() {
         throw reservesError
       }
 
-
       // 予約者のプロフィール情報を取得（user_idが存在する場合のみ）
       const validUserIds = reservesData
         ?.filter(reserve => reserve.user_id !== null)
         .map(reserve => reserve.user_id) || []
-
 
       let profilesData: Tables<'profiles'>[] = []
       if (validUserIds.length > 0) {
@@ -172,11 +177,13 @@ export default function ReservePage() {
       // 予約データとプロフィール情報を結合
       const reservesWithProfile = (reservesData as any[]).map(reserve => {
         const profile = reserve.user_id ? profilesData.find(profile => profile.user_id === reserve.user_id) || null : null
+        const members = reserve.reserve_member_relations?.map((relation: any) => relation.member) || []
         return {
           ...reserve,
           profile,
           groups: reserve.reserve_group_relations?.map((relation: any) => relation.groups) || [],
-          reserve_group: reserve.reserve_relations?.[0]?.reserve_groups || null
+          reserve_group: reserve.reserve_relations?.[0]?.reserve_groups || null,
+          members
         }
       })
 
@@ -1559,7 +1566,7 @@ export default function ReservePage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">時間</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">タイトル</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">説明</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">グループ</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">参加メンバー</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">操作</th>
               </tr>
             </thead>
@@ -1585,14 +1592,14 @@ export default function ReservePage() {
                     {reserve.description || '未設定'}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
-                    {reserve.groups && reserve.groups.length > 0 ? (
+                    {reserve.members && reserve.members.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
-                        {reserve.groups.map((group) => (
+                        {reserve.members.map((member) => (
                           <span
-                            key={group.id}
-                            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+                            key={member.id}
+                            className="inline-flex items-center px-2 py-0.5 rounded text-xs"
                           >
-                            {group.name}
+                            {member.name} {member.organization ? `(${member.organization})` : ''}
                           </span>
                         ))}
                       </div>
@@ -1609,20 +1616,20 @@ export default function ReservePage() {
                           <button
                             onClick={(e) => {
                               e.preventDefault();
-                              showDeleteConfirm(reserve);
+                              handleEdit(reserve);
                             }}
-                            className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
                           >
-                            削除
+                            編集
                           </button>
                           <button
                             onClick={(e) => {
                               e.preventDefault();
-                              handleEdit(reserve);
+                              showDeleteConfirm(reserve);
                             }}
-                            className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
                           >
-                            編集
+                            削除
                           </button>
                         </div>
                       ) : null;
@@ -1782,7 +1789,7 @@ export default function ReservePage() {
                 )}
               </div>
 
-              <div>
+              {/* <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   関連グループ
                 </label>
@@ -1803,46 +1810,29 @@ export default function ReservePage() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </div> */}
 
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">参加メンバー</label>
                   <div className="mt-2 max-h-48 overflow-y-auto border rounded-md p-2">
-                    {profiles.map(profile => {
-                      // 現在選択されているグループに所属するメンバーかどうかを判定
-                      const isGroupMember = formData.selectedGroups.length > 0 && 
-                        groupMemberRelations.some(relation => 
-                          relation.group_id === formData.selectedGroups[0] && 
-                          relation.user_id === profile.user_id
-                        )
-
-                      return (
-                        <div key={profile.id} className="flex items-center space-x-2 py-1">
-                          <input
-                            type="checkbox"
-                            id={`member-${profile.id}`}
-                            checked={formData.selectedMembers.includes(profile.id)}
-                            onChange={() => toggleMember(profile.id)}
-                            className={`rounded border-gray-300 ${
-                              isGroupMember 
-                                ? 'text-indigo-600 focus:ring-indigo-500' 
-                                : 'text-gray-400 focus:ring-gray-500'
-                            }`}
-                          />
-                          <label 
-                            htmlFor={`member-${profile.id}`} 
-                            className={`text-sm ${
-                              isGroupMember 
-                                ? 'text-gray-700 dark:text-gray-300' 
-                                : 'text-gray-400 dark:text-gray-500'
-                            }`}
-                          >
-                            {profile.name} {profile.organization ? `(${profile.organization})` : ''}
-                          </label>
-                        </div>
-                      )
-                    })}
+                    {profiles.map(profile => (
+                      <div key={profile.id} className="flex items-center space-x-2 py-1">
+                        <input
+                          type="checkbox"
+                          id={`member-${profile.id}`}
+                          checked={formData.selectedMembers.includes(profile.id)}
+                          onChange={() => toggleMember(profile.id)}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <label 
+                          htmlFor={`member-${profile.id}`} 
+                          className="text-sm text-gray-700 dark:text-gray-300"
+                        >
+                          {profile.name} {profile.organization ? `(${profile.organization})` : ''}
+                        </label>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
