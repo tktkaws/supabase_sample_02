@@ -2,19 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/app/utils/supabase/client'
+import { Database } from '@/database.types'
 import { Tables } from '@/database.types'
 
-type Reserve = Tables<'reserves'>
-type Profile = Tables<'profiles'>
-type Group = Tables<'groups'>
-
-type ReserveWithProfile = Reserve & {
-  profile: Profile | null
-  groups?: Group[]
-  reserve_group?: {
-    id: number
-  } | null
+type ReserveWithProfile = Tables<'reserves'> & {
+  profile?: Tables<'profiles'>
+  groups?: Tables<'groups'>[]
+  reserve_group?: Tables<'reserve_groups'>
   relatedReserves?: ReserveWithProfile[]
+  members?: Database['public']['Tables']['profiles']['Row'][]
 }
 
 // スタイルの追加（ファイルの先頭付近に追加）
@@ -39,7 +35,7 @@ type ConfirmMode = 'delete' | false
 
 export default function ReservePage() {
   const [reserves, setReserves] = useState<ReserveWithProfile[]>([])
-  const [groups, setGroups] = useState<Group[]>([])
+  const [groups, setGroups] = useState<Tables<'groups'>[]>([])
   const [loading, setLoading] = useState(true)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [isEditing, setIsEditing] = useState<EditMode>(false)
@@ -62,6 +58,7 @@ export default function ReservePage() {
     end_time: '',
     description: '',
     selectedGroups: [] as number[],
+    selectedMembers: [] as number[], // 追加：選択されたメンバー
     isRecurring: false,
     recurringWeeks: 1
   })
@@ -73,11 +70,13 @@ export default function ReservePage() {
   const [deletingReserveId, setDeletingReserveId] = useState<number | null>(null)
   const [isConfirming, setIsConfirming] = useState<ConfirmMode>(false)
   const [deleteMode, setDeleteMode] = useState<'single' | 'all' | null>(null)
+  const [profiles, setProfiles] = useState<Database['public']['Tables']['profiles']['Row'][]>([]) // 型を修正
   const supabase = createClient()
 
   useEffect(() => {
     fetchReserves()
     fetchGroups()
+    fetchProfiles()
     // 現在のユーザーIDを取得
     const getCurrentUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -94,7 +93,7 @@ export default function ReservePage() {
         .order('name', { ascending: true })
 
       if (error) throw error
-      setGroups((data || []) as Group[])
+      setGroups((data || []) as Tables<'groups'>[])
     } catch (error) {
       console.error('Error fetching groups:', error)
     }
@@ -103,7 +102,10 @@ export default function ReservePage() {
   const fetchReserves = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) {
+        return
+      }
+
 
       // 予約データを取得（全ての予約）
       const { data: reservesData, error: reservesError } = await supabase
@@ -125,37 +127,63 @@ export default function ReservePage() {
         `)
         .order('start_time', { ascending: true })
 
-      if (reservesError) throw reservesError
+      if (reservesError) {
+        console.error('Error fetching reserves:', reservesError)
+        throw reservesError
+      }
+
 
       // 予約者のプロフィール情報を取得（user_idが存在する場合のみ）
       const validUserIds = reservesData
         ?.filter(reserve => reserve.user_id !== null)
         .map(reserve => reserve.user_id) || []
 
-      let profilesData: Profile[] = []
+
+      let profilesData: Tables<'profiles'>[] = []
       if (validUserIds.length > 0) {
         const { data, error: profilesError } = await supabase
           .from('profiles')
           .select('*')
           .in('user_id', validUserIds)
 
-        if (profilesError) throw profilesError
-        profilesData = (data || []) as Profile[]
+        if (profilesError) {
+          console.error('Error fetching profiles:', profilesError)
+          throw profilesError
+        }
+        profilesData = (data || []) as Tables<'profiles'>[]
       }
 
       // 予約データとプロフィール情報を結合
-      const reservesWithProfile = (reservesData as any[]).map(reserve => ({
-        ...reserve,
-        profile: reserve.user_id ? profilesData.find(profile => profile.user_id === reserve.user_id) || null : null,
-        groups: reserve.reserve_group_relations?.map((relation: any) => relation.groups) || [],
-        reserve_group: reserve.reserve_relations?.[0]?.reserve_groups || null
-      }))
+      const reservesWithProfile = (reservesData as any[]).map(reserve => {
+        const profile = reserve.user_id ? profilesData.find(profile => profile.user_id === reserve.user_id) || null : null
+        return {
+          ...reserve,
+          profile,
+          groups: reserve.reserve_group_relations?.map((relation: any) => relation.groups) || [],
+          reserve_group: reserve.reserve_relations?.[0]?.reserve_groups || null
+        }
+      })
 
       setReserves(reservesWithProfile)
     } catch (error) {
       console.error('Error fetching data:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ユーザー一覧を取得する関数を追加
+  const fetchProfiles = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('name')
+
+      if (error) throw error
+      setProfiles((data || []) as Database['public']['Tables']['profiles']['Row'][])
+    } catch (error) {
+      console.error('Error fetching profiles:', error)
     }
   }
 
@@ -217,6 +245,7 @@ export default function ReservePage() {
       end_time: endTime,
       description: '',
       selectedGroups: [],
+      selectedMembers: [], // 追加：選択されたメンバー
       isRecurring: false,
       recurringWeeks: 1
     })
@@ -232,7 +261,7 @@ export default function ReservePage() {
   }
 
   // 編集モードでフォームを開く
-  const handleEdit = (reserve: ReserveWithProfile) => {
+  const handleEdit = async (reserve: ReserveWithProfile) => {
     setEditingReserveId(reserve.id)
     const startTime = reserve.start_time ? new Date(reserve.start_time) : new Date()
     const endTime = reserve.end_time ? new Date(reserve.end_time) : new Date()
@@ -257,6 +286,19 @@ export default function ReservePage() {
 
     const startTimeStr = formatTimeToHHmm(roundedStartTime)
     const endTimeStr = formatTimeToHHmm(roundedEndTime)
+
+    // 予約に紐づいているメンバーを取得
+    const { data: memberRelations, error: memberError } = await supabase
+      .from('reserve_member_relations')
+      .select('member_id')
+      .eq('reserve_id', reserve.id)
+
+    if (memberError) {
+      console.error('Error fetching member relations:', memberError)
+    }
+
+    // メンバーIDの配列を取得（型を明示的に指定）
+    const selectedMemberIds = (memberRelations as { member_id: number }[] || []).map(relation => relation.member_id)
     
     setFormData({
       title: reserve.title || '',
@@ -264,6 +306,7 @@ export default function ReservePage() {
       end_time: `${roundedEndTime.toISOString().split('T')[0]}T${endTimeStr}`,
       description: reserve.description || '',
       selectedGroups: reserve.groups?.map(group => group.id) || [],
+      selectedMembers: selectedMemberIds, // 取得したメンバーIDを設定
       isRecurring: false,
       recurringWeeks: 1
     })
@@ -298,6 +341,7 @@ export default function ReservePage() {
       end_time: '',
       description: '',
       selectedGroups: [],
+      selectedMembers: [], // 追加：選択されたメンバー
       isRecurring: false,
       recurringWeeks: 1
     })
@@ -403,6 +447,12 @@ export default function ReservePage() {
             .delete()
             .eq('reserve_id', editingReserveId)
 
+          // メンバー関係を更新
+          await supabase
+            .from('reserve_member_relations')
+            .delete()
+            .eq('reserve_id', editingReserveId)
+
           if (formData.selectedGroups.length > 0) {
             const groupRelations = formData.selectedGroups.map(groupId => ({
               reserve_id: editingReserveId,
@@ -414,6 +464,20 @@ export default function ReservePage() {
               .insert(groupRelations)
 
             if (relationError) throw relationError
+          }
+
+          // 新しいメンバー関係を追加
+          if (formData.selectedMembers.length > 0) {
+            const memberRelations = formData.selectedMembers.map(memberId => ({
+              reserve_id: editingReserveId,
+              member_id: memberId
+            }))
+
+            const { error: memberRelationError } = await supabase
+              .from('reserve_member_relations')
+              .insert(memberRelations)
+
+            if (memberRelationError) throw memberRelationError
           }
 
           setMessage('予約を更新しました')
@@ -469,6 +533,12 @@ export default function ReservePage() {
               .delete()
               .eq('reserve_id', reserve.id)
 
+            // メンバー関係を更新
+            await supabase
+              .from('reserve_member_relations')
+              .delete()
+              .eq('reserve_id', reserve.id)
+
             if (formData.selectedGroups.length > 0) {
               const groupRelations = formData.selectedGroups.map(groupId => ({
                 reserve_id: reserve.id,
@@ -480,6 +550,20 @@ export default function ReservePage() {
                 .insert(groupRelations)
 
               if (relationError) throw relationError
+            }
+
+            // 新しいメンバー関係を追加
+            if (formData.selectedMembers.length > 0) {
+              const memberRelations = formData.selectedMembers.map(memberId => ({
+                reserve_id: reserve.id,
+                member_id: memberId
+              }))
+
+              const { error: memberRelationError } = await supabase
+                .from('reserve_member_relations')
+                .insert(memberRelations)
+
+              if (memberRelationError) throw memberRelationError
             }
           }
 
@@ -514,6 +598,20 @@ export default function ReservePage() {
               .insert(groupRelations)
 
             if (relationError) throw relationError
+          }
+
+          // メンバー関係を追加
+          if (formData.selectedMembers.length > 0) {
+            const memberRelations = formData.selectedMembers.map(memberId => ({
+              reserve_id: newReserve.id,
+              member_id: memberId
+            }))
+
+            const { error: memberRelationError } = await supabase
+              .from('reserve_member_relations')
+              .insert(memberRelations)
+
+            if (memberRelationError) throw memberRelationError
           }
 
           return newReserve
@@ -830,15 +928,51 @@ export default function ReservePage() {
   }
 
   // 予約詳細を表示する関数
-  const handleShowDetail = (reserve: ReserveWithProfile) => {
+  const handleShowDetail = async (reserve: ReserveWithProfile) => {
     // 同じグループに属する予約を取得
     const relatedReserves = reserve.reserve_group
       ? reserves.filter(r => r.reserve_group?.id === reserve.reserve_group?.id)
       : [reserve]
 
+    // 参加メンバーを取得
+    const { data: memberRelations, error: memberError } = await supabase
+      .from('reserve_member_relations')
+      .select('member_id')
+      .eq('reserve_id', reserve.id)
+
+    if (memberError) {
+      console.error('Error fetching member relations:', memberError)
+    }
+
+    // メンバーIDからプロフィール情報を取得
+    const memberIds = memberRelations?.map(relation => relation.member_id) || []
+    let members: Database['public']['Tables']['profiles']['Row'][] = []
+
+    if (memberIds.length > 0) {
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', memberIds)
+
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError)
+      } else {
+        // 型ガードで正しい型のみmembersに代入
+        members = (profilesData || []).filter((profile): profile is Database['public']['Tables']['profiles']['Row'] =>
+          profile && typeof profile === 'object' &&
+          'id' in profile &&
+          'created_at' in profile &&
+          'name' in profile &&
+          'organization' in profile &&
+          'user_id' in profile
+        )
+      }
+    }
+
     setSelectedReserve({
       ...reserve,
-      relatedReserves
+      relatedReserves,
+      members
     })
     setIsDetailOpen(true)
   }
@@ -875,6 +1009,12 @@ export default function ReservePage() {
             .eq('reserve_id', reserveId)
         }
 
+        // メンバーとの関連を削除
+        await supabase
+          .from('reserve_member_relations')
+          .delete()
+          .eq('reserve_id', reserveId)
+
         // グループとの関連を削除
         await supabase
           .from('reserve_group_relations')
@@ -896,6 +1036,14 @@ export default function ReservePage() {
         const relatedReserves = reserve.reserve_group
           ? reserves.filter(r => r.reserve_group?.id === reserve.reserve_group?.id)
           : [reserve]
+
+        // まず全ての予約のメンバーとの関連を削除
+        for (const relatedReserve of relatedReserves) {
+          await supabase
+            .from('reserve_member_relations')
+            .delete()
+            .eq('reserve_id', relatedReserve.id)
+        }
 
         // まず全ての予約のグループとの関連を削除
         for (const relatedReserve of relatedReserves) {
@@ -965,6 +1113,16 @@ export default function ReservePage() {
     await handleDelete(deletingReserveId, deleteMode || 'single')
     setIsConfirming(false)
     setDeleteMode(null)
+  }
+
+  // メンバー選択を切り替える関数を追加
+  const toggleMember = (memberId: number) => {
+    setFormData(prev => ({
+      ...prev,
+      selectedMembers: prev.selectedMembers.includes(memberId)
+        ? prev.selectedMembers.filter(id => id !== memberId)
+        : [...prev.selectedMembers, memberId]
+    }))
   }
 
   if (loading) {
@@ -1397,28 +1555,32 @@ export default function ReservePage() {
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {reserve.user_id === currentUserId && (
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            showDeleteConfirm(reserve);
-                          }}
-                          className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
-                        >
-                          削除
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handleEdit(reserve);
-                          }}
-                          className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
-                        >
-                          編集
-                        </button>
-                      </div>
-                    )}
+                    {(() => {
+                      const shouldShow = reserve.user_id === currentUserId;
+                      
+                      return shouldShow ? (
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              showDeleteConfirm(reserve);
+                            }}
+                            className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
+                          >
+                            削除
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleEdit(reserve);
+                            }}
+                            className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                          >
+                            編集
+                          </button>
+                        </div>
+                      ) : null;
+                    })()}
                   </td>
                 </tr>
               ))}
@@ -1596,6 +1758,28 @@ export default function ReservePage() {
                 </div>
               </div>
 
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">参加メンバー</label>
+                  <div className="mt-2 max-h-48 overflow-y-auto border rounded-md p-2">
+                    {profiles.map(profile => (
+                      <div key={profile.id} className="flex items-center space-x-2 py-1">
+                        <input
+                          type="checkbox"
+                          id={`member-${profile.id}`}
+                          checked={formData.selectedMembers.includes(profile.id)}
+                          onChange={() => toggleMember(profile.id)}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <label htmlFor={`member-${profile.id}`} className="text-sm text-gray-700 dark:text-gray-300">
+                          {profile.name} {profile.organization ? `(${profile.organization})` : ''}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="flex justify-end space-x-4 pt-4">
                 <button
                   type="button"
@@ -1666,81 +1850,66 @@ export default function ReservePage() {
             </div>
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">予約者</h3>
-                <p className="mt-1 text-gray-900 dark:text-gray-100">
-                  {selectedReserve.profile?.name || '未設定'}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">所属</h3>
-                <p className="mt-1 text-gray-900 dark:text-gray-100">
-                  {selectedReserve.profile?.organization || '未設定'}
-                </p>
-              </div>
-              <div>
                 <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">日時</h3>
                 <p className="mt-1 text-gray-900 dark:text-gray-100">
                   {formatDisplayDate(selectedReserve.start_time)} {formatTimeRange(selectedReserve.start_time, selectedReserve.end_time)}
                 </p>
               </div>
-              {selectedReserve.relatedReserves && selectedReserve.relatedReserves.length > 1 && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">関連する予約</h3>
-                  <div className="mt-1 space-y-2">
-                    {selectedReserve.relatedReserves.map((relatedReserve) => (
-                      <div key={relatedReserve.id} className="text-sm text-gray-900 dark:text-gray-100">
-                        {formatDisplayDate(relatedReserve.start_time)} {formatTimeRange(relatedReserve.start_time, relatedReserve.end_time)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div>
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">説明</h3>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">予約者</h3>
                 <p className="mt-1 text-gray-900 dark:text-gray-100">
-                  {selectedReserve.description || '未設定'}
+                  {selectedReserve.profile?.name || '未設定'}
+                  {selectedReserve.profile?.organization ? `(${selectedReserve.profile.organization})` : ''}
                 </p>
               </div>
+              
               <div>
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">グループ</h3>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {selectedReserve.groups && selectedReserve.groups.length > 0 ? (
-                    selectedReserve.groups.map((group) => (
-                      <span
-                        key={group.id}
-                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
-                      >
-                        {group.name}
-                      </span>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">参加メンバー</h3>
+                <div className="mt-1 space-y-1">
+                  {selectedReserve.members?.length ? (
+                    selectedReserve.members.map(member => (
+                      <p key={member.id} className="text-gray-900 dark:text-gray-100">
+                        {member.name} {member.organization ? `(${member.organization})` : ''}
+                      </p>
                     ))
                   ) : (
-                    <span className="text-gray-500 dark:text-gray-400">未設定</span>
+                    <p className="text-gray-500 dark:text-gray-400">参加メンバーなし</p>
                   )}
                 </div>
               </div>
+              {selectedReserve.description && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">説明</h3>
+                  <p className="mt-1 text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
+                    {selectedReserve.description}
+                  </p>
+                </div>
+              )}
+
+              {/* 予約作成者のみ表示する操作ボタン */}
+              {selectedReserve.user_id === currentUserId && (
+                <div className="flex justify-end space-x-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <button
+                    onClick={() => {
+                      handleCloseDetail()
+                      handleEdit(selectedReserve)
+                    }}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                  >
+                    編集
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleCloseDetail()
+                      showDeleteConfirm(selectedReserve)
+                    }}
+                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                  >
+                    削除
+                  </button>
+                </div>
+              )}
             </div>
-            {selectedReserve.user_id === currentUserId && (
-              <div className="mt-6 flex justify-end space-x-4">
-                <button
-                  onClick={() => {
-                    handleCloseDetail()
-                    showDeleteConfirm(selectedReserve)
-                  }}
-                  className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                >
-                  削除
-                </button>
-                <button
-                  onClick={() => {
-                    handleCloseDetail()
-                    handleEdit(selectedReserve)
-                  }}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                >
-                  編集
-                </button>
-              </div>
-            )}
           </div>
         </div>
       )}
