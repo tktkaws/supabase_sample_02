@@ -44,6 +44,7 @@ export default function ReservePage() {
   const [isEditing, setIsEditing] = useState<EditMode>(false)
   const [editingReserveId, setEditingReserveId] = useState<number | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [viewMode, setViewMode] = useState<'list' | 'timetable' | 'monthly'>(() => {
     if (typeof window !== 'undefined') {
       const savedView = localStorage.getItem('reserveViewMode')
@@ -108,6 +109,17 @@ export default function ReservePage() {
     const getCurrentUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       setCurrentUserId(user?.id || null)
+      
+      // 管理者権限の確認
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('admin')
+          .eq('user_id', user.id)
+          .single()
+        
+        setIsAdmin(!!profile?.admin)
+      }
     }
     getCurrentUser()
   }, [])
@@ -463,6 +475,12 @@ export default function ReservePage() {
         const editingReserve = reserves.find(r => r.id === editingReserveId)
         if (!editingReserve) return
 
+        // 管理者でない場合、自分の予約のみ更新可能
+        if (!isAdmin && editingReserve.user_id !== user.id) {
+          setError('この予約を更新する権限がありません')
+          return
+        }
+
         if (isEditing === 'single') {
           // 単一予約の編集
           const { error } = await supabase
@@ -474,7 +492,7 @@ export default function ReservePage() {
               description: formData.description
             })
             .eq('id', editingReserveId)
-            .eq('user_id', user.id)
+            .eq('user_id', isAdmin ? (editingReserve.user_id || user.id) : user.id)
 
           if (error) throw error
 
@@ -568,7 +586,7 @@ export default function ReservePage() {
                 end_time: formatDateTime(newReserveEnd.toISOString())
               })
               .eq('id', reserve.id)
-              .eq('user_id', user.id)
+              .eq('user_id', isAdmin ? (reserve.user_id || user.id) : user.id)
 
             if (error) throw error
 
@@ -1045,6 +1063,12 @@ export default function ReservePage() {
       const reserve = reserves.find(r => r.id === reserveId)
       if (!reserve) return
 
+      // 管理者でない場合、自分の予約のみ削除可能
+      if (!isAdmin && reserve.user_id !== user.id) {
+        setError('この予約を削除する権限がありません')
+        return
+      }
+
       if (mode === 'single') {
         // 単一予約の削除
         // まず予約グループとの関連を削除
@@ -1067,12 +1091,12 @@ export default function ReservePage() {
           .delete()
           .eq('reserve_id', reserveId)
 
-        // 予約を削除
+        // 予約を削除（管理者の場合はuser_idのチェックをスキップ）
         const { error } = await supabase
           .from('reserves')
           .delete()
           .eq('id', reserveId)
-          .eq('user_id', user.id)
+          .eq('user_id', isAdmin ? (reserve.user_id || user.id) : user.id)
 
         if (error) throw error
 
@@ -1107,13 +1131,13 @@ export default function ReservePage() {
             .eq('reserve_group_id', reserve.reserve_group.id)
         }
 
-        // 全ての予約を削除
+        // 全ての予約を削除（管理者の場合はuser_idのチェックをスキップ）
         for (const relatedReserve of relatedReserves) {
           const { error } = await supabase
             .from('reserves')
             .delete()
             .eq('id', relatedReserve.id)
-            .eq('user_id', user.id)
+            .eq('user_id', isAdmin ? (relatedReserve.user_id || user.id) : user.id)
 
           if (error) throw error
         }
@@ -1932,7 +1956,7 @@ export default function ReservePage() {
               )}
 
               {/* 予約作成者のみ表示する操作ボタン */}
-              {selectedReserve.user_id === currentUserId && (
+              {(selectedReserve.user_id === currentUserId || isAdmin) && (
                 <div className="flex justify-end space-x-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                   <button
                     onClick={() => {
