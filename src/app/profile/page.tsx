@@ -320,6 +320,12 @@ export default function ProfilePage() {
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">組織</label>
                 <p className="mt-1 text-lg">{profile?.organization || '未設定'}</p>
               </div>
+              {profile?.admin && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">権限</label>
+                  <p className="mt-1 text-lg">管理者</p>
+                </div>
+              )}
               <button
                 onClick={() => setIsEditing(true)}
                 className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"

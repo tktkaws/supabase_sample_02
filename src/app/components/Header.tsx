@@ -109,7 +109,7 @@ export default function Header() {
               user ? (
                 <div className="flex items-center gap-4">
                   <span className="text-sm text-gray-600 dark:text-gray-300">
-                    {profile?.name || user.email}
+                    {profile?.admin ? `${profile.name || user.email}（管理者）` : profile?.name || user.email}
                   </span>
                   <button
                     onClick={handleLogout}
