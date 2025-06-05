@@ -72,7 +72,8 @@ export default function ReservePage() {
     selectedGroups: [] as number[],
     selectedMembers: [] as number[], // 追加：選択されたメンバー
     isRecurring: false,
-    recurringWeeks: 1
+    recurringWeeks: 1,
+    date: ''
   })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -285,25 +286,51 @@ export default function ReservePage() {
     const startTime = `${formattedDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
     const endTime = getOneHourLater(startTime)
     
+    // ログインユーザーのプロフィールIDを取得
+    const currentUserProfile = profiles.find(profile => profile.user_id === currentUserId)
+    
     setFormData({
       title: '',
       start_time: startTime,
       end_time: endTime,
       description: '',
       selectedGroups: [],
-      selectedMembers: [], // 追加：選択されたメンバー
+      selectedMembers: currentUserProfile ? [currentUserProfile.id] : [], // ログインユーザーをデフォルトで選択
       isRecurring: false,
-      recurringWeeks: 1
+      recurringWeeks: 1,
+      date: formattedDate
     })
-    
     setIsEditing(false)
     setEditingReserveId(null)
     setIsFormOpen(true)
+
+    // フォームが表示された後にチェックボックスを更新
+    setTimeout(() => {
+      if (currentUserProfile) {
+        const checkbox = document.getElementById(`member-${currentUserProfile.id}`) as HTMLInputElement
+        if (checkbox) {
+          checkbox.checked = true
+          checkbox.dispatchEvent(new Event('change'))
+        }
+      }
+    }, 300) // タイムアウトを300msに増やして、フォームの表示を待つ
   }
 
   // 日付セルをクリックした時の処理
   const handleDateCellClick = (date: Date) => {
     handleOpenForm(date)
+    
+    // フォームが表示された後にチェックボックスを更新
+    setTimeout(() => {
+      const currentUserProfile = profiles.find(profile => profile.user_id === currentUserId)
+      if (currentUserProfile) {
+        const checkbox = document.getElementById(`member-${currentUserProfile.id}`) as HTMLInputElement
+        if (checkbox) {
+          checkbox.checked = true
+          checkbox.dispatchEvent(new Event('change'))
+        }
+      }
+    }, 300)
   }
 
   // 編集モードでフォームを開く
@@ -354,7 +381,8 @@ export default function ReservePage() {
       selectedGroups: reserve.groups?.map(group => group.id) || [],
       selectedMembers: selectedMemberIds, // 取得したメンバーIDを設定
       isRecurring: false,
-      recurringWeeks: 1
+      recurringWeeks: 1,
+      date: roundedStartTime.toISOString().split('T')[0]
     })
 
     // 関連する予約がある場合は編集モードを選択
@@ -400,7 +428,8 @@ export default function ReservePage() {
       selectedGroups: [],
       selectedMembers: [], // 追加：選択されたメンバー
       isRecurring: false,
-      recurringWeeks: 1
+      recurringWeeks: 1,
+      date: ''
     })
     setError('')
   }
@@ -744,12 +773,40 @@ export default function ReservePage() {
   }
 
   const toggleGroup = (groupId: number) => {
+    // チェック状態を確認
+    const isChecked = !formData.selectedGroups.includes(groupId)
+
+    // グループの選択状態を更新
     setFormData(prev => ({
       ...prev,
       selectedGroups: prev.selectedGroups.includes(groupId)
         ? prev.selectedGroups.filter(id => id !== groupId)
         : [...prev.selectedGroups, groupId]
     }))
+
+    // グループに属するメンバーのIDを取得
+    const groupMemberIds = groupMemberRelations
+      .filter(relation => relation.group_id === groupId)
+      .map(relation => relation.user_id)
+      .map(id => Number(id))
+
+    // メンバーの選択状態を更新（重複を防ぐ）
+    setFormData(prev => {
+      if (isChecked) {
+        // チェックされた場合は、既存のメンバーと新しいメンバーを結合（重複を除去）
+        const newSelectedMembers = new Set([...prev.selectedMembers, ...groupMemberIds])
+        return {
+          ...prev,
+          selectedMembers: Array.from(newSelectedMembers)
+        }
+      } else {
+        // チェックが外された場合は、該当グループのメンバーを除外
+        return {
+          ...prev,
+          selectedMembers: prev.selectedMembers.filter(id => !groupMemberIds.includes(id))
+        }
+      }
+    })
   }
 
   // 重複チェック関数を修正（編集時は自分の予約との重複を無視）
@@ -1207,8 +1264,8 @@ export default function ReservePage() {
     groupMemberIds.forEach(memberId => {
       const checkbox = document.getElementById(`member-${memberId}`)
       console.log("checkbox", checkbox)
-      if (checkbox) {
-        checkbox.checked = true
+        if (checkbox) {
+          checkbox.checked = true
         checkbox.dispatchEvent(new Event('change'));
       }
     })
@@ -1663,188 +1720,191 @@ export default function ReservePage() {
             }
           }}
         >
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-[800px]">
             <h2 className="text-xl font-bold mb-4">{isEditing === 'select' ? '編集モードを選択' : isEditing === 'single' ? '予約を編集' : '予約を作成'}</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">タイトル</label>
-                <input
-                  type="text"
-                  name="title"
-                  value={formData.title}
-                  onChange={handleInputChange}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">日付</label>
-                  <input
-                    type="date"
-                    name="date"
-                    value={formData.start_time.split('T')[0]}
-                    onChange={(e) => {
-                      const date = e.target.value;
-                      const [_, time] = formData.start_time.split('T');
-                      setFormData(prev => ({
-                        ...prev,
-                        start_time: `${date}T${time}`,
-                        end_time: `${date}T${formData.end_time.split('T')[1]}`
-                      }));
-                    }}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">開始時間</label>
-                  <select
-                    name="start_time"
-                    value={formData.start_time.split('T')[1]}
-                    onChange={(e) => {
-                      const time = e.target.value;
-                      const [date] = formData.start_time.split('T');
-                      setFormData(prev => ({
-                        ...prev,
-                        start_time: `${date}T${time}`
-                      }));
-                    }}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                    required
-                  >
-                    {timeOptions.map((time) => (
-                      <option key={time} value={time} selected={time === formData.start_time.split('T')[1]}>
-                        {time}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">終了時間</label>
-                  <select
-                    name="end_time"
-                    value={formData.end_time.split('T')[1]}
-                    onChange={(e) => {
-                      const time = e.target.value;
-                      const [date] = formData.end_time.split('T');
-                      setFormData(prev => ({
-                        ...prev,
-                        end_time: `${date}T${time}`
-                      }));
-                    }}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                    required
-                  >
-                    {timeOptions.map((time) => (
-                      <option key={time} value={time} selected={time === formData.end_time.split('T')[1]}>
-                        {time}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">説明</label>
-                <textarea
-                  name="description"
-                  value={formData.description}
-                  onChange={handleInputChange}
-                  rows={3}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                />
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="isRecurring"
-                    checked={formData.isRecurring}
-                    onChange={(e) => setFormData(prev => ({
-                      ...prev,
-                      isRecurring: e.target.checked
-                    }))}
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor="isRecurring" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    毎週同じ時間に予約を繰り返す
-                  </label>
-                </div>
-
-                {formData.isRecurring && (
+              <div className="grid grid-cols-2 gap-8">
+                {/* 左カラム */}
+                <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                      何週間分作成するか
-                    </label>
-                    <select
-                      value={formData.recurringWeeks}
-                      onChange={(e) => setFormData(prev => ({
-                        ...prev,
-                        recurringWeeks: parseInt(e.target.value)
-                      }))}
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">日付</label>
+                    <input
+                      type="date"
+                      name="date"
+                      value={formData.date}
+                      onChange={handleInputChange}
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
-                    >
-                      {[1, 2, 3, 4, 8, 12].map((weeks) => (
-                        <option key={weeks} value={weeks}>
-                          {weeks}週間
-                        </option>
-                      ))}
-                    </select>
+                      required
+                    />
                   </div>
-                )}
-              </div>
 
-              {/* <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  関連グループ
-                </label>
-                <div className="border rounded-lg p-4 max-h-40 overflow-y-auto bg-white dark:bg-gray-700">
-                  {groups.map((group) => (
-                    <div key={group.id} className="flex items-center space-x-2 mb-2 last:mb-0">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">タイトル</label>
+                    <input
+                      type="text"
+                      name="title"
+                      value={formData.title}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">開始時間</label>
+                      <select
+                        name="start_time"
+                        value={formData.start_time.split('T')[1]}
+                        onChange={(e) => {
+                          const time = e.target.value;
+                          const [date] = formData.start_time.split('T');
+                          setFormData(prev => ({
+                            ...prev,
+                            start_time: `${date}T${time}`
+                          }));
+                        }}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                        required
+                      >
+                        {timeOptions.map((time) => (
+                          <option key={time} value={time}>
+                            {time}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">終了時間</label>
+                      <select
+                        name="end_time"
+                        value={formData.end_time.split('T')[1]}
+                        onChange={(e) => {
+                          const time = e.target.value;
+                          const [date] = formData.end_time.split('T');
+                          setFormData(prev => ({
+                            ...prev,
+                            end_time: `${date}T${time}`
+                          }));
+                        }}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                        required
+                      >
+                        {timeOptions.map((time) => (
+                          <option key={time} value={time}>
+                            {time}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">説明</label>
+                    <textarea
+                      name="description"
+                      value={formData.description}
+                      onChange={handleInputChange}
+                      rows={3}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center space-x-2">
                       <input
-                        type="radio"
-                        id={`group-${group.id}`}
-                        name="selectedGroup"
-                        checked={formData.selectedGroups.includes(group.id)}
-                        onChange={() => handleGroupSelect(group.id)}
-                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                        type="checkbox"
+                        id="isRecurring"
+                        checked={formData.isRecurring}
+                        onChange={(e) => setFormData(prev => ({
+                          ...prev,
+                          isRecurring: e.target.checked
+                        }))}
+                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                       />
-                      <label htmlFor={`group-${group.id}`} className="text-sm text-gray-700 dark:text-gray-300">
-                        {group.name}
+                      <label htmlFor="isRecurring" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        毎週同じ時間に予約を繰り返す
                       </label>
                     </div>
-                  ))}
-                </div>
-              </div> */}
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">参加メンバー</label>
-                  <div className="mt-2 max-h-48 overflow-y-auto border rounded-md p-2">
-                    {profiles.map(profile => (
-                      <div key={profile.id} className="flex items-center space-x-2 py-1">
-                        <input
-                          type="checkbox"
-                          id={`member-${profile.id}`}
-                          checked={formData.selectedMembers.includes(profile.id)}
-                          onChange={() => toggleMember(profile.id)}
-                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <label 
-                          htmlFor={`member-${profile.id}`} 
-                          className="text-sm text-gray-700 dark:text-gray-300"
-                        >
-                          {profile.name} {profile.organization ? `(${profile.organization})` : ''}
+                    {formData.isRecurring && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          何週間分作成するか
                         </label>
+                        <select
+                          value={formData.recurringWeeks}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            recurringWeeks: parseInt(e.target.value)
+                          }))}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                        >
+                          {[1, 2, 3, 4, 8, 12].map((weeks) => (
+                            <option key={weeks} value={weeks}>
+                              {weeks}週間
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                    ))}
+                    )}
+                  </div>
+                </div>
+
+                {/* 右カラム */}
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">ユーザーグループ</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {groups.map((group) => (
+                        <button
+                          key={group.id}
+                          type="button"
+                          onClick={() => toggleGroup(group.id)}
+                          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200
+                            ${formData.selectedGroups.includes(group.id)
+                              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                            }
+                            disabled:opacity-50 disabled:cursor-not-allowed
+                            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
+                        >
+                          {group.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">参加メンバー</label>
+                    <div className="space-y-4">
+                      {Array.from(new Set(profiles.map(p => p.organization || '未所属'))).map(organization => (
+                        <div key={organization} className="space-y-2">
+                          <h4 className="text-sm font-medium text-gray-500 dark:text-gray-400">{organization}</h4>
+                          <div className="grid grid-cols-2 gap-2">
+                            {profiles
+                              .filter(profile => (profile.organization || '未所属') === organization)
+                              .map((profile) => (
+                                <button
+                                  key={profile.id}
+                                  type="button"
+                                  onClick={() => toggleMember(profile.id)}
+                                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200
+                                    ${formData.selectedMembers.includes(profile.id)
+                                      ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                                    }
+                                    disabled:opacity-50 disabled:cursor-not-allowed
+                                    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
+                                >
+                                  {profile.name}
+                                </button>
+                              ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
