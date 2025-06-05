@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/app/utils/supabase/client'
 import { Database } from '@/database.types'
 import { Tables } from '@/database.types'
+import { useSearchParams, useRouter } from 'next/navigation'
 
 type ReserveWithProfile = Tables<'reserves'> & {
   profile?: Tables<'profiles'>
@@ -34,6 +35,8 @@ type DeleteMode = 'select' | 'single' | 'all' | false
 type ConfirmMode = 'delete' | false
 
 export default function ReservePage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [reserves, setReserves] = useState<ReserveWithProfile[]>([])
   const [groups, setGroups] = useState<Tables<'groups'>[]>([])
   const [loading, setLoading] = useState(true)
@@ -41,7 +44,15 @@ export default function ReservePage() {
   const [isEditing, setIsEditing] = useState<EditMode>(false)
   const [editingReserveId, setEditingReserveId] = useState<number | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'list' | 'timetable' | 'monthly'>('timetable')
+  const [viewMode, setViewMode] = useState<'list' | 'timetable' | 'monthly'>(() => {
+    if (typeof window !== 'undefined') {
+      const savedView = localStorage.getItem('reserveViewMode')
+      return (savedView === 'list' || savedView === 'timetable' || savedView === 'monthly') 
+        ? savedView 
+        : 'timetable'
+    }
+    return 'timetable'
+  })
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const now = new Date()
     const day = now.getDay()
@@ -755,10 +766,11 @@ export default function ReservePage() {
     if (!dateTimeString) return '未設定'
     try {
       const date = new Date(dateTimeString)
-      const year = date.getFullYear()
-      const month = String(date.getMonth() + 1).padStart(2, '0')
-      const day = String(date.getDate()).padStart(2, '0')
-      return `${year}年${month}月${day}日`
+      const month = date.getMonth() + 1
+      const day = date.getDate()
+      const weekdays = ['日', '月', '火', '水', '木', '金', '土']
+      const weekday = weekdays[date.getDay()]
+      return `${month}月${day}日(${weekday})`
     } catch (error) {
       console.error('Error formatting date:', error)
       return '未設定'
@@ -1178,6 +1190,14 @@ export default function ReservePage() {
     })
   }
 
+  // ビューモードを変更する関数を更新
+  const handleViewModeChange = (mode: 'list' | 'timetable' | 'monthly') => {
+    setViewMode(mode)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('reserveViewMode', mode)
+    }
+  }
+
   if (loading) {
     return <div className="flex justify-center items-center min-h-screen">読み込み中...</div>
   }
@@ -1189,7 +1209,7 @@ export default function ReservePage() {
         <div className="flex items-center space-x-4">
           <div className="flex space-x-2">
             <button
-              onClick={() => setViewMode('timetable')}
+              onClick={() => handleViewModeChange('timetable')}
               className={`px-4 py-2 rounded-md ${
                 viewMode === 'timetable'
                   ? 'bg-indigo-600 text-white'
@@ -1199,7 +1219,7 @@ export default function ReservePage() {
               週
             </button>
             <button
-              onClick={() => setViewMode('monthly')}
+              onClick={() => handleViewModeChange('monthly')}
               className={`px-4 py-2 rounded-md ${
                 viewMode === 'monthly'
                   ? 'bg-indigo-600 text-white'
@@ -1209,7 +1229,7 @@ export default function ReservePage() {
               月
             </button>
             <button
-              onClick={() => setViewMode('list')}
+              onClick={() => handleViewModeChange('list')}
               className={`px-4 py-2 rounded-md ${
                 viewMode === 'list'
                   ? 'bg-indigo-600 text-white'
@@ -1557,88 +1577,56 @@ export default function ReservePage() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full bg-white dark:bg-gray-800 rounded-lg shadow">
-            <thead>
-              <tr className="bg-gray-50 dark:bg-gray-700">
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">予約者</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">所属</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">日付</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">時間</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">タイトル</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">説明</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">参加メンバー</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {reserves.map((reserve) => (
-                <tr key={reserve.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {reserve.profile?.name || '未設定'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {reserve.profile?.organization || '未設定'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {formatDisplayDate(reserve.start_time)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {formatTimeRange(reserve.start_time, reserve.end_time)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {reserve.title || '無題'}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
-                    {reserve.description || '未設定'}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
-                    {reserve.members && reserve.members.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {reserve.members.map((member) => (
-                          <span
-                            key={member.id}
-                            className="inline-flex items-center px-2 py-0.5 rounded text-xs"
-                          >
-                            {member.name} {member.organization ? `(${member.organization})` : ''}
-                          </span>
-                        ))}
+          <div className="relative">
+            <div className="grid grid-cols-[20%_20%_40%_20%] min-w-full bg-gray-50 dark:bg-gray-700 rounded-t-lg">
+              <div className="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">日時</div>
+              <div className="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">タイトル</div>
+              <div className="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">参加メンバー</div>
+              <div className="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">予約者</div>
+            </div>
+            <div className="overflow-y-auto max-h-[calc(100vh-200px)]">
+              <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                {reserves.map((reserve) => (
+                  <li key={reserve.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <a
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleShowDetail(reserve);
+                      }}
+                      className="grid grid-cols-[20%_20%_40%_20%] min-w-full bg-white dark:bg-gray-800"
+                    >
+                      <div className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                        {formatDisplayDate(reserve.start_time)} {formatTimeRange(reserve.start_time, reserve.end_time)}
                       </div>
-                    ) : (
-                      '未設定'
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {(() => {
-                      const shouldShow = reserve.user_id === currentUserId;
-                      
-                      return shouldShow ? (
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleEdit(reserve);
-                            }}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                          >
-                            編集
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              showDeleteConfirm(reserve);
-                            }}
-                            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                          >
-                            削除
-                          </button>
-                        </div>
-                      ) : null;
-                    })()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      <div className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                        {reserve.title || '無題'}
+                      </div>
+                      <div className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
+                        {reserve.members && reserve.members.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {reserve.members.map((member) => (
+                              <span
+                                key={member.id}
+                                className="inline-flex items-center px-2 py-0.5 rounded text-xs"
+                              >
+                                {member.name} {member.organization ? `(${member.organization})` : ''}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          '未設定'
+                        )}
+                      </div>
+                      <div className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                        {reserve.profile?.name || '未設定'} {reserve.profile?.organization ? `(${reserve.profile.organization})` : ''}
+                      </div>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       )}
 
